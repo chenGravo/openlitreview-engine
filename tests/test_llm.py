@@ -23,6 +23,10 @@ def test_chat_completion_request_uses_json_mode() -> None:
     assert body["max_tokens"] == 123
 
 
+def test_kimi_uses_current_official_api_base_url() -> None:
+    assert PROVIDERS["kimi"].base_url == "https://api.moonshot.ai/v1"
+
+
 def test_responses_request_does_not_store_provider_state() -> None:
     endpoint, body = _build_request(
         PROVIDERS["doubao"],

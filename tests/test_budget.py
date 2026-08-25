@@ -3,6 +3,7 @@ from decimal import Decimal
 import pytest
 
 from openlitreview.budget import BudgetExceeded, BudgetLedger
+from openlitreview.pricing import get_price
 from openlitreview.schemas import BudgetSettings
 
 
@@ -35,3 +36,8 @@ def test_unknown_model_is_blocked(tmp_path) -> None:
     with pytest.raises(ValueError, match="Unknown or unpriced"):
         ledger.authorize_call("task-1", "unreviewed-model", 100, 100)
 
+
+def test_kimi_usd_prices_use_conservative_cny_planning_rate() -> None:
+    price = get_price("kimi-k2.6")
+    assert price.input_cny_per_million == Decimal("8")
+    assert price.output_cny_per_million == Decimal("32")

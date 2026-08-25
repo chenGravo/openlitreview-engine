@@ -28,7 +28,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
         api_key_envs=("DEEPSEEK_API_KEY",),
     ),
     "kimi": ProviderConfig(
-        base_url="https://api.moonshot.cn/v1",
+        base_url="https://api.moonshot.ai/v1",
         api_style="chat_completions",
         api_key_envs=("KIMI_API_KEY", "MOONSHOT_API_KEY"),
     ),
