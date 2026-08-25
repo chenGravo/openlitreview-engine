@@ -1,0 +1,40 @@
+task_id: anonymous-smoke-test
+title: Anonymous scholarly metadata test
+research_question: Can public scholarly metadata be retrieved for a neutral test concept?
+keywords:
+  - evidence synthesis
+languages:
+  - en
+year_from: 2015
+year_to: 2026
+
+search:
+  sources:
+    - crossref
+    - semantic_scholar
+    - europe_pmc
+  max_queries_per_source: 1
+  max_candidates: 100
+  max_per_query_per_source: 20
+  screening_pool: 50
+  target_fulltexts: 10
+  minimum_independent_sources: 3
+  saturation_rounds: 1
+  saturation_new_relevant_ratio: 0.02
+  citation_seed_count: 0
+  max_citation_expansion: 0
+  include_preprints: true
+  open_access_fulltext_only: true
+
+output:
+  target_chinese_characters: 3000
+  formats: [md]
+
+models:
+  enabled: false
+
+compliance:
+  privacy_class: A
+  rights_confirmed: true
+  contains_personal_or_sensitive_data: false
+  contains_confidential_or_secret_data: false

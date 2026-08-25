@@ -1,0 +1,10 @@
+{
+  "name": "openlitreview-citation-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "packageManager": "pnpm@11.19.0",
+  "dependencies": {
+    "citeproc": "2.4.63"
+  }
+}

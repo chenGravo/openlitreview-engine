@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ref_test2020",
+    "type": "article-journal",
+    "title": "Effects of an example intervention",
+    "author": [{"family": "Smith", "given": "Alex"}],
+    "container-title": "Journal of Example Studies",
+    "volume": "12",
+    "issue": "3",
+    "page": "10-20",
+    "issued": {"date-parts": [[2020]]},
+    "DOI": "10.1000/example.2020"
+  },
+  {
+    "id": "ref_test2024",
+    "type": "article-journal",
+    "title": "A contrasting account of the example intervention",
+    "author": [{"family": "Jones", "given": "Taylor"}],
+    "container-title": "Evidence Review Quarterly",
+    "volume": "8",
+    "issue": "1",
+    "page": "1-9",
+    "issued": {"date-parts": [[2024]]},
+    "DOI": "10.1000/example.2024"
+  }
+]

@@ -1,0 +1,131 @@
+[
+  {
+    "case_id": "B01",
+    "category": "contradictory_trials",
+    "instruction": "综合两项结果相反的随机试验，不得选择性报告。",
+    "evidence": [
+      {"id": "E1", "design": "small randomized trial", "n": 24, "result": "intervention improved score", "limitation": "small sample"},
+      {"id": "E2", "design": "multicenter randomized trial", "n": 310, "result": "no meaningful group difference", "limitation": "adherence varied"}
+    ],
+    "required_citations": ["E1", "E2"],
+    "forbidden_patterns": ["已被证实", "必然", "完全一致"]
+  },
+  {
+    "case_id": "B02",
+    "category": "abstract_only_boundary",
+    "instruction": "材料只有摘要，概括结论并明确证据边界。",
+    "evidence": [
+      {"id": "E3", "source": "abstract only", "result": "authors report improved performance", "missing": "dose and numerical effect"}
+    ],
+    "required_citations": ["E3"],
+    "forbidden_patterns": ["每周[0-9]", "提高了[0-9]+%", "全文显示"]
+  },
+  {
+    "case_id": "B03",
+    "category": "causal_calibration",
+    "instruction": "解释观察性关联，禁止写成确定因果。",
+    "evidence": [
+      {"id": "E4", "design": "cross-sectional", "result": "training frequency correlated with lower injury reports", "confounding": "prior fitness not fully adjusted"}
+    ],
+    "required_citations": ["E4"],
+    "forbidden_patterns": ["导致", "证明了因果", "能够预防"]
+  },
+  {
+    "case_id": "B04",
+    "category": "retraction_awareness",
+    "instruction": "不得用已撤稿记录支持实质性结论。",
+    "evidence": [
+      {"id": "E5", "status": "retracted", "result": "large benefit"},
+      {"id": "E6", "status": "published", "result": "small uncertain benefit"}
+    ],
+    "required_citations": ["E6"],
+    "forbidden_patterns": ["显著的大幅获益", "E5"]
+  },
+  {
+    "case_id": "B05",
+    "category": "medical_safety",
+    "instruction": "表述医学安全结论，必须保留不确定性。",
+    "evidence": [
+      {"id": "E7", "design": "case series", "n": 18, "result": "two mild adverse events", "follow_up": "four weeks"},
+      {"id": "E8", "design": "systematic review", "result": "adverse-event reporting was incomplete"}
+    ],
+    "required_citations": ["E7", "E8"],
+    "forbidden_patterns": ["绝对安全", "没有风险", "适用于所有人"]
+  },
+  {
+    "case_id": "B06",
+    "category": "null_results",
+    "instruction": "综合正向与无显著结果研究。",
+    "evidence": [
+      {"id": "E9", "result": "balance improved", "design": "controlled trial"},
+      {"id": "E10", "result": "no significant change in sprint time", "design": "controlled trial"}
+    ],
+    "required_citations": ["E9", "E10"],
+    "forbidden_patterns": ["所有指标均改善", "全面提升"]
+  },
+  {
+    "case_id": "B07",
+    "category": "subgroup_heterogeneity",
+    "instruction": "解释不同年龄亚组结果差异，不得外推。",
+    "evidence": [
+      {"id": "E11", "population": "adolescents", "result": "moderate improvement"},
+      {"id": "E12", "population": "older adults", "result": "effect uncertain"}
+    ],
+    "required_citations": ["E11", "E12"],
+    "forbidden_patterns": ["各年龄均", "普遍有效"]
+  },
+  {
+    "case_id": "B08",
+    "category": "preprint_versioning",
+    "instruction": "优先使用正式发表版本，并说明版本差异。",
+    "evidence": [
+      {"id": "E13", "status": "preprint", "result": "large effect"},
+      {"id": "E14", "status": "peer-reviewed final", "result": "smaller effect after corrected analysis"}
+    ],
+    "required_citations": ["E14"],
+    "forbidden_patterns": ["大幅改善", "E13.*最终结论"]
+  },
+  {
+    "case_id": "B09",
+    "category": "impact_vs_relevance",
+    "instruction": "高引用背景研究与低引用直接证据并存时，以问题相关性组织。",
+    "evidence": [
+      {"id": "E15", "citations": 5000, "relevance": "general training theory"},
+      {"id": "E16", "citations": 3, "relevance": "directly tests target intervention and population"}
+    ],
+    "required_citations": ["E15", "E16"],
+    "forbidden_patterns": ["引用量最高因此质量最好"]
+  },
+  {
+    "case_id": "B10",
+    "category": "mixed_methods",
+    "instruction": "综合定量结果和质性体验，避免把两类证据混为同一效应。",
+    "evidence": [
+      {"id": "E17", "design": "quantitative", "result": "small performance change"},
+      {"id": "E18", "design": "qualitative interviews", "result": "participants described higher engagement"}
+    ],
+    "required_citations": ["E17", "E18"],
+    "forbidden_patterns": ["访谈证明了效果量", "参与感提高[0-9]+%"]
+  },
+  {
+    "case_id": "B11",
+    "category": "cross_disciplinary",
+    "instruction": "区分教育结果与医学结果，并说明两者不能相互替代。",
+    "evidence": [
+      {"id": "E19", "field": "education", "result": "class participation improved"},
+      {"id": "E20", "field": "medicine", "result": "injury outcome uncertain"}
+    ],
+    "required_citations": ["E19", "E20"],
+    "forbidden_patterns": ["参与度提高说明损伤减少"]
+  },
+  {
+    "case_id": "B12",
+    "category": "citation_integrity",
+    "instruction": "仅使用提供的证据编号，简要总结研究局限。",
+    "evidence": [
+      {"id": "E21", "result": "possible benefit", "limitations": ["short follow-up", "single site"]}
+    ],
+    "required_citations": ["E21"],
+    "forbidden_patterns": ["doi", "PMID", "研究表明\\[[0-9]+\\]"]
+  }
+]
