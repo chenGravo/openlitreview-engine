@@ -105,6 +105,7 @@ class ModelSettings(BaseModel):
     enabled: bool = False
     cheap_model: str = "deepseek-v4-flash"
     primary_model: str = "deepseek-v4-pro"
+    perspective_model: str = "kimi-k2.6"
     reviewer_model: str = "doubao-seed-2.1-pro"
     allow_second_model_review: bool = True
     max_revision_rounds: int = Field(default=1, ge=0, le=2)
@@ -114,7 +115,12 @@ class ModelSettings(BaseModel):
     def validate_reviewed_models(self) -> ModelSettings:
         from .pricing import MODEL_PRICES
 
-        aliases = (self.cheap_model, self.primary_model, self.reviewer_model)
+        aliases = (
+            self.cheap_model,
+            self.primary_model,
+            self.perspective_model,
+            self.reviewer_model,
+        )
         unknown = [alias for alias in aliases if alias not in MODEL_PRICES]
         if unknown:
             raise ValueError(f"Unknown or unpriced model aliases: {unknown}")
@@ -124,6 +130,12 @@ class ModelSettings(BaseModel):
             and self.primary_model == self.reviewer_model
         ):
             raise ValueError("Independent reviewer_model must differ from primary_model")
+        if self.enabled:
+            if self.perspective_model in {self.primary_model, self.reviewer_model}:
+                raise ValueError(
+                    "Independent perspective_model must differ from primary_model and "
+                    "reviewer_model"
+                )
         return self
 
 

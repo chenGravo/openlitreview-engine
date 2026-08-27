@@ -171,4 +171,5 @@ def test_default_model_route_uses_blind_benchmark_selection() -> None:
         }
     )
     assert task.models.primary_model == "deepseek-v4-pro"
+    assert task.models.perspective_model == "kimi-k2.6"
     assert task.models.reviewer_model == "doubao-seed-2.1-pro"

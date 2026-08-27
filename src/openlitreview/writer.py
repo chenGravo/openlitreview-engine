@@ -18,6 +18,12 @@ Chinese draft against the evidence cards. Identify unsupported, overstated, caus
 medical-safety, contradictory, or missing-counterevidence claims. Do not rewrite for style and do
 not invent sources. Return strict JSON only."""
 
+PERSPECTIVE_SYSTEM = """You are the pre-writing cross-evidence perspective auditor for a Chinese
+academic literature review. Use only the supplied evidence cards. Identify competing explanations,
+contradictory or null findings, population and subgroup boundaries, education-versus-medical
+boundaries, safety uncertainty, missing perspectives, and limitations that the outline and draft
+must preserve. Do not invent sources, facts, identifiers, or certainty. Return strict JSON only."""
+
 REVISION_SYSTEM = """You revise a Chinese narrative academic literature review after an
 independent evidence audit. Correct every reported issue using only the supplied evidence cards.
 Preserve supported nuance, disagreements, null results, limitations, and Pandoc citation keys.
@@ -32,6 +38,12 @@ async def generate_review(
     output: Path,
 ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
     evidence_packet = _evidence_packet(papers, cards)
+    perspective_payload = await _audit_perspectives(task, evidence_packet, client)
+    perspective_path = output / "audit" / "prewriting_perspective_audit.json"
+    perspective_path.write_text(
+        json.dumps(perspective_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     outline_payload = await client.complete_json(
         model_alias=task.models.primary_model,
         system=OUTLINE_SYSTEM,
@@ -43,6 +55,7 @@ async def generate_review(
                 {
                     "task": _task_payload(task),
                     "evidence": evidence_packet,
+                    "independent_perspective_audit": perspective_payload,
                 },
                 ensure_ascii=False,
             )
@@ -65,6 +78,7 @@ async def generate_review(
                     "task": _task_payload(task),
                     "approved_outline": outline_payload,
                     "evidence": evidence_packet,
+                    "independent_perspective_audit": perspective_payload,
                 },
                 ensure_ascii=False,
             )
@@ -137,6 +151,35 @@ async def generate_review(
                 encoding="utf-8",
             )
     return markdown, draft_payload, reviewer_payload
+
+
+async def _audit_perspectives(
+    task: TaskSpec,
+    evidence_packet: list[dict[str, Any]],
+    client: LLMClient,
+) -> dict[str, Any]:
+    model_alias = task.models.perspective_model
+    return await client.complete_json(
+        model_alias=model_alias,
+        system=PERSPECTIVE_SYSTEM,
+        prompt=(
+            "Return schema: "
+            '{"evidence_clusters":[{"label":"","evidence_ids":[]}],'
+            '"contradictions":[{"description":"","evidence_ids":[]}],'
+            '"missing_or_underrepresented_perspectives":[],"population_boundaries":[],'
+            '"education_medical_boundaries":[],"safety_uncertainties":[],'
+            '"required_limitations":[],"outline_requirements":[]}\n'
+            + json.dumps(
+                {
+                    "task": _task_payload(task),
+                    "evidence": evidence_packet,
+                },
+                ensure_ascii=False,
+            )
+        ),
+        max_output_tokens=3_000,
+        temperature=0.2,
+    )
 
 
 async def _review_draft(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from .benchmark import run_benchmark
 from .budget import BudgetLedger
 from .config import dump_task_contract, load_task
 from .pipeline import execute_pipeline, execution_id
-from .schemas import BudgetSettings
+from .schemas import BudgetSettings, TaskSpec
 from .search import run_search
 from .storage import prepare_run_directory, write_search_outputs
 
@@ -31,6 +32,18 @@ def build_parser() -> argparse.ArgumentParser:
     contract = subparsers.add_parser("contract", help="Write a human-readable task contract")
     contract.add_argument("task")
     contract.add_argument("--output", required=True)
+
+    quick_task = subparsers.add_parser(
+        "quick-task", help="Create a validated review task from a simple web form"
+    )
+    quick_task.add_argument("--title", required=True)
+    quick_task.add_argument("--question", required=True)
+    quick_task.add_argument("--keywords", required=True)
+    quick_task.add_argument("--year-from", type=int, default=2000)
+    quick_task.add_argument("--year-to", type=int, default=2026)
+    quick_task.add_argument("--characters", type=int, default=8_000)
+    quick_task.add_argument("--requirements", default="")
+    quick_task.add_argument("--output", required=True)
 
     search = subparsers.add_parser("search", help="Run metadata search without model calls")
     search.add_argument("task")
@@ -100,6 +113,57 @@ def main(argv: list[str] | None = None) -> int:
             output.parent.mkdir(parents=True, exist_ok=True)
             dump_task_contract(task, output)
             print(str(output.resolve()))
+            return 0
+        if args.command == "quick-task":
+            keywords = [
+                value.strip()
+                for value in re.split(r"[,，;；\n]+", args.keywords)
+                if value.strip()
+            ]
+            task = TaskSpec.model_validate(
+                {
+                    "title": args.title.strip(),
+                    "research_question": args.question.strip(),
+                    "keywords": keywords,
+                    "languages": ["en"],
+                    "year_from": args.year_from,
+                    "year_to": args.year_to,
+                    "user_requirements": (
+                        args.requirements.strip()
+                        or (
+                            "普通中文叙述性文献综述，兼顾经典、最新和相反证据。"
+                        )
+                    ),
+                    "output": {"target_chinese_characters": args.characters},
+                    "models": {"enabled": True},
+                    "compliance": {
+                        "rights_confirmed": True,
+                        "contains_personal_or_sensitive_data": False,
+                        "contains_confidential_or_secret_data": False,
+                        "ai_body_generation_allowed": True,
+                    },
+                }
+            )
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(
+                json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            print(
+                json.dumps(
+                    {
+                        "output": str(output.resolve()),
+                        "task_id": task.resolved_task_id(),
+                        "model_route": {
+                            "primary": task.models.primary_model,
+                            "perspective": task.models.perspective_model,
+                            "reviewer": task.models.reviewer_model,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
             return 0
         if args.command == "search":
             task = load_task(args.task)

@@ -12,8 +12,10 @@ class FakeClient:
     def __init__(self, responses: list[dict[str, Any]]) -> None:
         self.responses = responses
         self.calls = 0
+        self.model_aliases: list[str] = []
 
-    async def complete_json(self, **_: Any) -> dict[str, Any]:
+    async def complete_json(self, **kwargs: Any) -> dict[str, Any]:
+        self.model_aliases.append(str(kwargs["model_alias"]))
         response = self.responses[self.calls]
         self.calls += 1
         return response
@@ -51,6 +53,11 @@ async def test_failed_independent_review_triggers_revision_and_rereview(tmp_path
     revised = _draft("修订后表述。[@ref_50c81ef030]")
     client = FakeClient(
         [
+            {
+                "evidence_clusters": [],
+                "contradictions": [],
+                "outline_requirements": [],
+            },
             {"central_argument": "测试", "sections": []},
             initial,
             {"verdict": "revise", "issues": [{"severity": "high"}]},
@@ -64,8 +71,17 @@ async def test_failed_independent_review_triggers_revision_and_rereview(tmp_path
         task, [paper], [card], client, tmp_path
     )
 
-    assert client.calls == 5
+    assert client.calls == 6
+    assert client.model_aliases == [
+        "kimi-k2.6",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        "doubao-seed-2.1-pro",
+        "deepseek-v4-pro",
+        "doubao-seed-2.1-pro",
+    ]
     assert "修订后表述" in markdown
     assert payload == revised
     assert reviewer == {"verdict": "pass", "issues": []}
+    assert (tmp_path / "audit" / "prewriting_perspective_audit.json").is_file()
     assert (tmp_path / "audit" / "independent_model_review_2.json").is_file()

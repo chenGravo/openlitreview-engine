@@ -51,6 +51,16 @@ budget:
   per_model_task_cap_cny: 10
   monthly_per_model_cap_cny: 10
 
+models:
+  enabled: true
+  cheap_model: deepseek-v4-flash
+  primary_model: deepseek-v4-pro
+  perspective_model: kimi-k2.6
+  reviewer_model: doubao-seed-2.1-pro
+  allow_second_model_review: true
+  max_revision_rounds: 1
+  temperature: 0.2
+
 quality:
   minimum_retained_records: 30
   minimum_evidence_papers: 15
