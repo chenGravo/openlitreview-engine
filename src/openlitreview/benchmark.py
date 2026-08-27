@@ -47,6 +47,7 @@ async def run_benchmark(
             task_reservation_cny=30,
             single_request_cap_cny=5,
             per_model_task_cap_cny=10,
+            monthly_per_model_cap_cny=10,
         ),
     )
     run_id = execution_id("phase0-model-benchmark")

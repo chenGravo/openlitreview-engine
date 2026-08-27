@@ -49,6 +49,7 @@ budget:
   external_monthly_cap_cny: 100
   single_request_cap_cny: 5
   per_model_task_cap_cny: 10
+  monthly_per_model_cap_cny: 10
 
 quality:
   minimum_retained_records: 30

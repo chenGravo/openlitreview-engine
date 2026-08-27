@@ -82,6 +82,7 @@ class BudgetSettings(BaseModel):
     external_monthly_cap_cny: float = Field(default=100.0, gt=0, le=100)
     single_request_cap_cny: float = Field(default=5.0, gt=0, le=10)
     per_model_task_cap_cny: float = Field(default=10.0, gt=0, le=10)
+    monthly_per_model_cap_cny: float = Field(default=10.0, gt=0, le=10)
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> BudgetSettings:
@@ -93,6 +94,8 @@ class BudgetSettings(BaseModel):
             raise ValueError("Budget thresholds must satisfy warning < hard stop <= external cap")
         if self.single_request_cap_cny > self.per_model_task_cap_cny:
             raise ValueError("Single request cap must not exceed the per-model task cap")
+        if self.single_request_cap_cny > self.monthly_per_model_cap_cny:
+            raise ValueError("Single request cap must not exceed the monthly per-model cap")
         return self
 
 

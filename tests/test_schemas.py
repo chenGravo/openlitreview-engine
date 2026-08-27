@@ -44,6 +44,21 @@ def test_single_request_cap_cannot_exceed_per_model_cap() -> None:
         )
 
 
+def test_single_request_cap_cannot_exceed_monthly_per_model_cap() -> None:
+    with pytest.raises(ValueError, match="monthly per-model cap"):
+        TaskSpec.model_validate(
+            {
+                "title": "Valid title",
+                "research_question": "A sufficiently long question?",
+                "keywords": ["test"],
+                "budget": {
+                    "single_request_cap_cny": 6,
+                    "monthly_per_model_cap_cny": 5,
+                },
+            }
+        )
+
+
 def test_sensitive_data_is_rejected() -> None:
     with pytest.raises(ValueError, match="personal or sensitive"):
         TaskSpec.model_validate(

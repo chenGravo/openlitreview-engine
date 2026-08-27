@@ -137,6 +137,16 @@ class BudgetLedger:
                     "Per-model task cap would be exceeded for "
                     f"{model_alias}: {model_consumed} + {estimated} > {model_cap}"
                 )
+            monthly_model_consumed = self._month_model_calls_reserved_or_spent(
+                connection, task["month"], model_alias
+            )
+            monthly_model_cap = Decimal(str(self.settings.monthly_per_model_cap_cny))
+            if monthly_model_consumed + estimated > monthly_model_cap:
+                raise BudgetExceeded(
+                    "Monthly per-model cap would be exceeded for "
+                    f"{model_alias}: {monthly_model_consumed} + {estimated} "
+                    f"> {monthly_model_cap}"
+                )
             connection.execute(
                 """
                 INSERT INTO model_call
@@ -239,6 +249,7 @@ class BudgetLedger:
             "hard_stop_cny": str(self.settings.monthly_hard_stop_cny),
             "external_cap_cny": str(self.settings.external_monthly_cap_cny),
             "per_model_task_cap_cny": str(self.settings.per_model_task_cap_cny),
+            "monthly_per_model_cap_cny": str(self.settings.monthly_per_model_cap_cny),
             "tasks": [dict(row) for row in rows],
         }
 
@@ -288,6 +299,26 @@ class BudgetLedger:
             WHERE task_id = ? AND model_alias = ?
             """,
             (task_id, model_alias),
+        ).fetchall()
+        return sum(
+            Decimal(row["actual_cny"])
+            if row["actual_cny"] is not None
+            else Decimal(row["estimated_cny"])
+            for row in rows
+        )
+
+    @staticmethod
+    def _month_model_calls_reserved_or_spent(
+        connection: sqlite3.Connection, month: str, model_alias: str
+    ) -> Decimal:
+        rows = connection.execute(
+            """
+            SELECT model_call.estimated_cny, model_call.actual_cny
+            FROM model_call
+            JOIN task_budget ON task_budget.task_id = model_call.task_id
+            WHERE task_budget.month = ? AND model_call.model_alias = ?
+            """,
+            (month, model_alias),
         ).fetchall()
         return sum(
             Decimal(row["actual_cny"])

@@ -48,6 +48,7 @@ def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
         task_reservation_cny=30,
         single_request_cap_cny=5,
         per_model_task_cap_cny=10,
+        monthly_per_model_cap_cny=10,
     )
     ledger = BudgetLedger(tmp_path / "budget.sqlite", settings)
     ledger.reserve_task("benchmark", Decimal("30"))
@@ -64,6 +65,15 @@ def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
             "benchmark",
             "deepseek-v4-pro",
             input_tokens=1_400_000,
+            max_output_tokens=0,
+        )
+
+    ledger.reserve_task("benchmark-retry", Decimal("30"))
+    with pytest.raises(BudgetExceeded, match="Monthly per-model cap"):
+        ledger.authorize_call(
+            "benchmark-retry",
+            "deepseek-v4-pro",
+            input_tokens=300_000,
             max_output_tokens=0,
         )
 
