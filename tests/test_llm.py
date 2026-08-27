@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from openlitreview.llm import (
@@ -6,6 +7,7 @@ from openlitreview.llm import (
     _build_request,
     _extract_content_and_usage,
     _parse_json_content,
+    _safe_http_error_detail,
 )
 
 
@@ -20,11 +22,41 @@ def test_chat_completion_request_uses_json_mode() -> None:
     )
     assert endpoint == "chat/completions"
     assert body["response_format"] == {"type": "json_object"}
-    assert body["max_tokens"] == 123
+    assert body["max_completion_tokens"] == 123
+    assert "max_tokens" not in body
 
 
 def test_kimi_uses_current_official_api_base_url() -> None:
-    assert PROVIDERS["kimi"].base_url == "https://api.moonshot.ai/v1"
+    assert PROVIDERS["kimi"].base_url == "https://api.moonshot.cn/v1"
+
+
+def test_deepseek_keeps_max_tokens_parameter() -> None:
+    _, body = _build_request(
+        PROVIDERS["deepseek"],
+        model="deepseek-v4-pro",
+        system="Return JSON",
+        prompt="Test",
+        max_output_tokens=123,
+        temperature=0.1,
+    )
+    assert body["max_tokens"] == 123
+    assert "max_completion_tokens" not in body
+
+
+def test_http_error_detail_excludes_message_and_contact_data() -> None:
+    response = httpx.Response(
+        402,
+        json={
+            "error": {
+                "type": "insufficient_balance",
+                "code": "billing_error",
+                "message": "contact private@example.com and include secret data",
+            }
+        },
+    )
+    detail = _safe_http_error_detail(response)
+    assert detail == " (type=insufficient_balance, code=billing_error)"
+    assert "private@example.com" not in detail
 
 
 def test_responses_request_does_not_store_provider_state() -> None:

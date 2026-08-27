@@ -19,6 +19,7 @@ class ProviderConfig:
     api_key_envs: tuple[str, ...]
     model_envs: tuple[str, ...] = ()
     require_configured_model: bool = False
+    max_tokens_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
 
 
 PROVIDERS: dict[str, ProviderConfig] = {
@@ -28,9 +29,10 @@ PROVIDERS: dict[str, ProviderConfig] = {
         api_key_envs=("DEEPSEEK_API_KEY",),
     ),
     "kimi": ProviderConfig(
-        base_url="https://api.moonshot.ai/v1",
+        base_url="https://api.moonshot.cn/v1",
         api_style="chat_completions",
         api_key_envs=("KIMI_API_KEY", "MOONSHOT_API_KEY"),
+        max_tokens_field="max_completion_tokens",
     ),
     "doubao": ProviderConfig(
         base_url="https://ark.cn-beijing.volces.com/api/v3",
@@ -112,6 +114,17 @@ class LLMClient:
             parsed = _parse_json_content(content)
             self.ledger.reconcile_call(call_id, actual_input, actual_output)
             return parsed
+        except httpx.HTTPStatusError as exc:
+            self.ledger.reconcile_call(
+                call_id,
+                input_tokens,
+                max_output_tokens,
+                status="failed_unknown",
+            )
+            detail = _safe_http_error_detail(exc.response)
+            raise ModelResponseError(
+                f"Model request failed: HTTP {exc.response.status_code}{detail}"
+            ) from exc
         except Exception as exc:
             self.ledger.reconcile_call(
                 call_id,
@@ -140,16 +153,17 @@ def _build_request(
     temperature: float,
 ) -> tuple[str, dict[str, Any]]:
     if provider.api_style == "chat_completions":
-        return "chat/completions", {
+        body: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature,
-            "max_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
         }
+        body[provider.max_tokens_field] = max_output_tokens
+        return "chat/completions", body
     return "responses", {
         "model": model,
         "input": [
@@ -215,3 +229,22 @@ def _parse_json_content(content: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ModelResponseError("Model JSON response must be an object")
     return payload
+
+
+def _safe_http_error_detail(response: httpx.Response) -> str:
+    """Return provider error type/code only; never persist messages or request data."""
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return ""
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return ""
+    safe_parts: list[str] = []
+    for label, key in (("type", "type"), ("code", "code")):
+        value = error.get(key)
+        if isinstance(value, (str, int)):
+            cleaned = re.sub(r"[^a-zA-Z0-9_.-]", "", str(value))[:80]
+            if cleaned:
+                safe_parts.append(f"{label}={cleaned}")
+    return f" ({', '.join(safe_parts)})" if safe_parts else ""

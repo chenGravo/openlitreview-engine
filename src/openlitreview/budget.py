@@ -128,23 +128,23 @@ class BudgetLedger:
                 raise BudgetExceeded(
                     f"Task reservation would be exceeded: {consumed} + {estimated} > {reserved}"
                 )
-            model_consumed = self._task_model_calls_reserved_or_spent(
-                connection, task_id, model_alias
+            model_consumed = self._task_provider_calls_reserved_or_spent(
+                connection, task_id, price.provider
             )
             model_cap = Decimal(str(self.settings.per_model_task_cap_cny))
             if model_consumed + estimated > model_cap:
                 raise BudgetExceeded(
-                    "Per-model task cap would be exceeded for "
-                    f"{model_alias}: {model_consumed} + {estimated} > {model_cap}"
+                    "Per-model/provider task cap would be exceeded for "
+                    f"{price.provider}: {model_consumed} + {estimated} > {model_cap}"
                 )
-            monthly_model_consumed = self._month_model_calls_reserved_or_spent(
-                connection, task["month"], model_alias
+            monthly_model_consumed = self._month_provider_calls_reserved_or_spent(
+                connection, task["month"], price.provider
             )
             monthly_model_cap = Decimal(str(self.settings.monthly_per_model_cap_cny))
             if monthly_model_consumed + estimated > monthly_model_cap:
                 raise BudgetExceeded(
-                    "Monthly per-model cap would be exceeded for "
-                    f"{model_alias}: {monthly_model_consumed} + {estimated} "
+                    "Monthly per-model/provider cap would be exceeded for "
+                    f"{price.provider}: {monthly_model_consumed} + {estimated} "
                     f"> {monthly_model_cap}"
                 )
             connection.execute(
@@ -289,16 +289,16 @@ class BudgetLedger:
         )
 
     @staticmethod
-    def _task_model_calls_reserved_or_spent(
-        connection: sqlite3.Connection, task_id: str, model_alias: str
+    def _task_provider_calls_reserved_or_spent(
+        connection: sqlite3.Connection, task_id: str, provider: str
     ) -> Decimal:
         rows = connection.execute(
             """
             SELECT estimated_cny, actual_cny
             FROM model_call
-            WHERE task_id = ? AND model_alias = ?
+            WHERE task_id = ? AND provider = ?
             """,
-            (task_id, model_alias),
+            (task_id, provider),
         ).fetchall()
         return sum(
             Decimal(row["actual_cny"])
@@ -308,17 +308,17 @@ class BudgetLedger:
         )
 
     @staticmethod
-    def _month_model_calls_reserved_or_spent(
-        connection: sqlite3.Connection, month: str, model_alias: str
+    def _month_provider_calls_reserved_or_spent(
+        connection: sqlite3.Connection, month: str, provider: str
     ) -> Decimal:
         rows = connection.execute(
             """
             SELECT model_call.estimated_cny, model_call.actual_cny
             FROM model_call
             JOIN task_budget ON task_budget.task_id = model_call.task_id
-            WHERE task_budget.month = ? AND model_call.model_alias = ?
+            WHERE task_budget.month = ? AND model_call.provider = ?
             """,
-            (month, model_alias),
+            (month, provider),
         ).fetchall()
         return sum(
             Decimal(row["actual_cny"])
