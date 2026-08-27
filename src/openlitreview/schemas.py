@@ -105,7 +105,7 @@ class ModelSettings(BaseModel):
     enabled: bool = False
     cheap_model: str = "deepseek-v4-flash"
     primary_model: str = "deepseek-v4-pro"
-    reviewer_model: str = "kimi-k2.6"
+    reviewer_model: str = "doubao-seed-2.1-pro"
     allow_second_model_review: bool = True
     max_revision_rounds: int = Field(default=1, ge=0, le=2)
     temperature: float = Field(default=0.2, ge=0, le=1)

@@ -160,3 +160,15 @@ def test_independent_reviewer_must_use_a_different_model() -> None:
                 },
             }
         )
+
+
+def test_default_model_route_uses_blind_benchmark_selection() -> None:
+    task = TaskSpec.model_validate(
+        {
+            "title": "Valid title",
+            "research_question": "A sufficiently long question?",
+            "keywords": ["test"],
+        }
+    )
+    assert task.models.primary_model == "deepseek-v4-pro"
+    assert task.models.reviewer_model == "doubao-seed-2.1-pro"
