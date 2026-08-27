@@ -137,7 +137,11 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(ledger.month_summary(), ensure_ascii=False, indent=2))
             return 0
         if args.command == "benchmark-budget-reserve":
-            settings = BudgetSettings(task_reservation_cny=30, single_request_cap_cny=5)
+            settings = BudgetSettings(
+                task_reservation_cny=30,
+                single_request_cap_cny=5,
+                per_model_task_cap_cny=10,
+            )
             ledger = BudgetLedger(args.ledger, settings)
             benchmark_id = execution_id("phase0-model-benchmark")
             reservation = ledger.reserve_task(benchmark_id)

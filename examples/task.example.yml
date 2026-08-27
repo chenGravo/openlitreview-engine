@@ -42,6 +42,14 @@ output:
     - docx
     - pdf
 
+budget:
+  task_reservation_cny: 15
+  monthly_warning_cny: 80
+  monthly_hard_stop_cny: 90
+  external_monthly_cap_cny: 100
+  single_request_cap_cny: 5
+  per_model_task_cap_cny: 10
+
 quality:
   minimum_retained_records: 30
   minimum_evidence_papers: 15

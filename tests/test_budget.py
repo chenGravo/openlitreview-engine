@@ -41,3 +41,36 @@ def test_kimi_usd_prices_use_conservative_cny_planning_rate() -> None:
     price = get_price("kimi-k2.6")
     assert price.input_cny_per_million == Decimal("8")
     assert price.output_cny_per_million == Decimal("32")
+
+
+def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
+    settings = BudgetSettings(
+        task_reservation_cny=30,
+        single_request_cap_cny=5,
+        per_model_task_cap_cny=10,
+    )
+    ledger = BudgetLedger(tmp_path / "budget.sqlite", settings)
+    ledger.reserve_task("benchmark", Decimal("30"))
+
+    for _ in range(2):
+        ledger.authorize_call(
+            "benchmark",
+            "deepseek-v4-pro",
+            input_tokens=1_400_000,
+            max_output_tokens=0,
+        )
+    with pytest.raises(BudgetExceeded, match="Per-model task cap"):
+        ledger.authorize_call(
+            "benchmark",
+            "deepseek-v4-pro",
+            input_tokens=1_400_000,
+            max_output_tokens=0,
+        )
+
+    _, estimate = ledger.authorize_call(
+        "benchmark",
+        "kimi-k2.6",
+        input_tokens=500_000,
+        max_output_tokens=0,
+    )
+    assert estimate == Decimal("4.4000")

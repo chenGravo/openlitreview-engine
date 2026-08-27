@@ -128,6 +128,15 @@ class BudgetLedger:
                 raise BudgetExceeded(
                     f"Task reservation would be exceeded: {consumed} + {estimated} > {reserved}"
                 )
+            model_consumed = self._task_model_calls_reserved_or_spent(
+                connection, task_id, model_alias
+            )
+            model_cap = Decimal(str(self.settings.per_model_task_cap_cny))
+            if model_consumed + estimated > model_cap:
+                raise BudgetExceeded(
+                    "Per-model task cap would be exceeded for "
+                    f"{model_alias}: {model_consumed} + {estimated} > {model_cap}"
+                )
             connection.execute(
                 """
                 INSERT INTO model_call
@@ -229,6 +238,7 @@ class BudgetLedger:
             "warning_cny": str(self.settings.monthly_warning_cny),
             "hard_stop_cny": str(self.settings.monthly_hard_stop_cny),
             "external_cap_cny": str(self.settings.external_monthly_cap_cny),
+            "per_model_task_cap_cny": str(self.settings.per_model_task_cap_cny),
             "tasks": [dict(row) for row in rows],
         }
 
@@ -259,6 +269,25 @@ class BudgetLedger:
         rows = connection.execute(
             "SELECT estimated_cny, actual_cny, status FROM model_call WHERE task_id = ?",
             (task_id,),
+        ).fetchall()
+        return sum(
+            Decimal(row["actual_cny"])
+            if row["actual_cny"] is not None
+            else Decimal(row["estimated_cny"])
+            for row in rows
+        )
+
+    @staticmethod
+    def _task_model_calls_reserved_or_spent(
+        connection: sqlite3.Connection, task_id: str, model_alias: str
+    ) -> Decimal:
+        rows = connection.execute(
+            """
+            SELECT estimated_cny, actual_cny
+            FROM model_call
+            WHERE task_id = ? AND model_alias = ?
+            """,
+            (task_id, model_alias),
         ).fetchall()
         return sum(
             Decimal(row["actual_cny"])

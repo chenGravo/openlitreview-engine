@@ -29,6 +29,21 @@ def test_invalid_budget_order_is_rejected() -> None:
         )
 
 
+def test_single_request_cap_cannot_exceed_per_model_cap() -> None:
+    with pytest.raises(ValueError, match="per-model task cap"):
+        TaskSpec.model_validate(
+            {
+                "title": "Valid title",
+                "research_question": "A sufficiently long question?",
+                "keywords": ["test"],
+                "budget": {
+                    "single_request_cap_cny": 6,
+                    "per_model_task_cap_cny": 5,
+                },
+            }
+        )
+
+
 def test_sensitive_data_is_rejected() -> None:
     with pytest.raises(ValueError, match="personal or sensitive"):
         TaskSpec.model_validate(
