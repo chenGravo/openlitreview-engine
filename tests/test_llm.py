@@ -24,6 +24,8 @@ def test_chat_completion_request_uses_json_mode() -> None:
     assert body["response_format"] == {"type": "json_object"}
     assert body["max_completion_tokens"] == 123
     assert "max_tokens" not in body
+    assert body["temperature"] == 0.6
+    assert body["thinking"] == {"type": "disabled"}
 
 
 def test_kimi_uses_current_official_api_base_url() -> None:

@@ -20,6 +20,8 @@ class ProviderConfig:
     model_envs: tuple[str, ...] = ()
     require_configured_model: bool = False
     max_tokens_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    temperature_override: float | None = None
+    thinking_mode: Literal["enabled", "disabled"] | None = None
 
 
 PROVIDERS: dict[str, ProviderConfig] = {
@@ -33,6 +35,8 @@ PROVIDERS: dict[str, ProviderConfig] = {
         api_style="chat_completions",
         api_key_envs=("KIMI_API_KEY", "MOONSHOT_API_KEY"),
         max_tokens_field="max_completion_tokens",
+        temperature_override=0.6,
+        thinking_mode="disabled",
     ),
     "doubao": ProviderConfig(
         base_url="https://ark.cn-beijing.volces.com/api/v3",
@@ -159,10 +163,16 @@ def _build_request(
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            "temperature": temperature,
+            "temperature": (
+                provider.temperature_override
+                if provider.temperature_override is not None
+                else temperature
+            ),
             "response_format": {"type": "json_object"},
         }
         body[provider.max_tokens_field] = max_output_tokens
+        if provider.thinking_mode is not None:
+            body["thinking"] = {"type": provider.thinking_mode}
         return "chat/completions", body
     return "responses", {
         "model": model,
