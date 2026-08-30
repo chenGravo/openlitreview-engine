@@ -44,3 +44,22 @@ def test_quick_task_creates_valid_three_model_task(tmp_path) -> None:
     assert task.models.perspective_model == "kimi-k2.6"
     assert task.models.reviewer_model == "doubao-seed-2.1-pro"
     assert json.loads(output.read_text(encoding="utf-8"))["languages"] == ["en"]
+
+
+def test_quick_task_uses_title_when_keywords_are_blank(tmp_path) -> None:
+    output = tmp_path / "quick-task.json"
+
+    result = main(
+        [
+            "quick-task",
+            "--title",
+            "学校体育与青少年心理健康",
+            "--question",
+            "学校体育如何影响青少年的心理健康？",
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert result == 0
+    assert load_task(output).keywords == ["学校体育与青少年心理健康"]

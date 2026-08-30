@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     quick_task.add_argument("--title", required=True)
     quick_task.add_argument("--question", required=True)
-    quick_task.add_argument("--keywords", required=True)
+    quick_task.add_argument("--keywords", default="")
     quick_task.add_argument("--year-from", type=int, default=2000)
     quick_task.add_argument("--year-to", type=int, default=2026)
     quick_task.add_argument("--characters", type=int, default=8_000)
@@ -120,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
                 for value in re.split(r"[,，;；\n]+", args.keywords)
                 if value.strip()
             ]
+            if not keywords:
+                keywords = [args.title.strip()]
             task = TaskSpec.model_validate(
                 {
                     "title": args.title.strip(),
