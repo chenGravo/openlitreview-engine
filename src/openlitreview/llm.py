@@ -26,9 +26,11 @@ class ProviderConfig:
 
 PROVIDERS: dict[str, ProviderConfig] = {
     "deepseek": ProviderConfig(
-        base_url="https://api.deepseek.com",
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
         api_style="chat_completions",
-        api_key_envs=("DEEPSEEK_API_KEY",),
+        api_key_envs=("ARK_DEEPSEEK_API_KEY",),
+        model_envs=("ARK_DEEPSEEK_MODEL_ID",),
+        require_configured_model=True,
     ),
     "kimi": ProviderConfig(
         base_url="https://api.moonshot.cn/v1",
@@ -76,8 +78,8 @@ class LLMClient:
         configured_model = _first_environment_value(provider.model_envs)
         if provider.require_configured_model and not configured_model:
             raise ModelResponseError(
-                "Doubao requires a verified Ark endpoint/model ID in "
-                "DOUBAO_MODEL_ENDPOINT or ARK_MODEL_ID"
+                f"{price.provider} requires a configured model ID in "
+                f"{' or '.join(provider.model_envs)}"
             )
         api_model = configured_model or price.api_model
         base_url = os.getenv(
@@ -129,6 +131,14 @@ class LLMClient:
             raise ModelResponseError(
                 f"Model request failed: HTTP {exc.response.status_code}{detail}"
             ) from exc
+        except ModelResponseError:
+            self.ledger.reconcile_call(
+                call_id,
+                input_tokens,
+                max_output_tokens,
+                status="failed_unknown",
+            )
+            raise
         except Exception as exc:
             self.ledger.reconcile_call(
                 call_id,

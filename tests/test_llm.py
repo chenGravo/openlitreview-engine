@@ -45,6 +45,14 @@ def test_deepseek_keeps_max_tokens_parameter() -> None:
     assert "max_completion_tokens" not in body
 
 
+def test_deepseek_uses_ark_route_and_configured_model() -> None:
+    provider = PROVIDERS["deepseek"]
+    assert provider.base_url == "https://ark.cn-beijing.volces.com/api/v3"
+    assert provider.api_key_envs == ("ARK_DEEPSEEK_API_KEY",)
+    assert provider.model_envs == ("ARK_DEEPSEEK_MODEL_ID",)
+    assert provider.require_configured_model is True
+
+
 def test_http_error_detail_excludes_message_and_contact_data() -> None:
     response = httpx.Response(
         402,

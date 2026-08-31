@@ -13,13 +13,13 @@ def test_task_reservation_and_actual_reconciliation(tmp_path) -> None:
     )
     ledger.reserve_task("task-1", Decimal("15"))
     call_id, estimate = ledger.authorize_call(
-        "task-1", "deepseek-v4-pro", input_tokens=1_000_000, max_output_tokens=100_000
+        "task-1", "deepseek-v4-pro", input_tokens=100_000, max_output_tokens=10_000
     )
-    assert estimate == Decimal("5.1700")
-    actual = ledger.reconcile_call(call_id, 900_000, 80_000)
-    assert actual == Decimal("4.1600")
+    assert estimate == Decimal("1.5840")
+    actual = ledger.reconcile_call(call_id, 90_000, 8_000)
+    assert actual == Decimal("1.2720")
     summary = ledger.complete_task("task-1")
-    assert summary["actual_cny"] == "4.1600"
+    assert summary["actual_cny"] == "1.2720"
 
 
 def test_monthly_hard_stop_blocks_new_task(tmp_path) -> None:
@@ -59,14 +59,14 @@ def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
         ledger.authorize_call(
             "benchmark",
             "deepseek-v4-pro",
-            input_tokens=1_000_000,
+            input_tokens=300_000,
             max_output_tokens=0,
         )
     with pytest.raises(BudgetExceeded, match="Per-model/provider task cap"):
         ledger.authorize_call(
             "benchmark",
             "deepseek-v4-pro",
-            input_tokens=300_000,
+            input_tokens=200_000,
             max_output_tokens=0,
         )
 
@@ -75,7 +75,7 @@ def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
         ledger.authorize_call(
             "benchmark-retry",
             "deepseek-v4-pro",
-            input_tokens=300_000,
+            input_tokens=200_000,
             max_output_tokens=0,
         )
 
@@ -100,13 +100,34 @@ def test_switching_alias_cannot_bypass_provider_cap(tmp_path) -> None:
     ledger.authorize_call(
         "benchmark",
         "deepseek-v4-pro",
-        input_tokens=225_000,
+        input_tokens=50_000,
         max_output_tokens=0,
     )
     with pytest.raises(BudgetExceeded, match="Per-model/provider task cap"):
         ledger.authorize_call(
             "benchmark",
             "deepseek-v4-flash",
-            input_tokens=100_000,
+            input_tokens=50_000,
             max_output_tokens=0,
         )
+
+
+def test_failed_task_releases_unused_reservation(tmp_path) -> None:
+    ledger = BudgetLedger(
+        tmp_path / "budget.sqlite",
+        BudgetSettings(task_reservation_cny=15, single_request_cap_cny=5),
+    )
+    ledger.reserve_task("failed-task")
+    call_id, _ = ledger.authorize_call(
+        "failed-task",
+        "deepseek-v4-pro",
+        input_tokens=10_000,
+        max_output_tokens=1_000,
+    )
+    actual = ledger.reconcile_call(call_id, 8_000, 500)
+    ledger.fail_task("failed-task")
+
+    task = ledger.task_summary("failed-task")
+    assert task["status"] == "failed"
+    assert task["actual_cny"] == str(actual)
+    assert ledger.month_summary()["internal_used_or_reserved_cny"] == str(actual)

@@ -12,6 +12,10 @@ from .schemas import EvidenceCard, PaperRecord, TaskSpec
 from .storage import citation_key
 
 
+class EvidenceExtractionError(RuntimeError):
+    pass
+
+
 async def extract_evidence_cards(
     task: TaskSpec,
     papers: list[PaperRecord],
@@ -26,6 +30,7 @@ async def extract_evidence_cards(
     }
     cards: list[EvidenceCard] = []
     log: list[dict[str, Any]] = []
+    consecutive_failures = 0
     for paper in papers[: task.search.target_fulltexts]:
         if paper.publication_status in {"retracted", "withdrawn"}:
             log.append(
@@ -48,7 +53,7 @@ async def extract_evidence_cards(
         text = text[:45_000]
         try:
             payload = await client.complete_json(
-                model_alias=task.models.primary_model,
+                model_alias=task.models.cheap_model,
                 system=EVIDENCE_SYSTEM,
                 prompt=evidence_prompt(paper, text, verified),
                 max_output_tokens=1_500,
@@ -57,6 +62,7 @@ async def extract_evidence_cards(
             extracted = payload.get("evidence") or []
             paper_cards = _cards_from_payload(paper, payload, extracted, verified)
             cards.extend(paper_cards)
+            consecutive_failures = 0
             log.append(
                 {
                     "record_id": paper.record_id,
@@ -67,6 +73,7 @@ async def extract_evidence_cards(
                 }
             )
         except Exception as exc:
+            consecutive_failures += 1
             log.append(
                 {
                     "record_id": paper.record_id,
@@ -74,6 +81,11 @@ async def extract_evidence_cards(
                     "error": f"{type(exc).__name__}: {str(exc)[:240]}",
                 }
             )
+            if consecutive_failures >= 3:
+                write_evidence_outputs(cards, log, papers, output)
+                raise EvidenceExtractionError(
+                    "Evidence extraction stopped after three consecutive model failures"
+                ) from exc
     write_evidence_outputs(cards, log, papers, output)
     return cards, log
 

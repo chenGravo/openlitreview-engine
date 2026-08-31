@@ -103,7 +103,7 @@ class ModelSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    cheap_model: str = "deepseek-v4-flash"
+    cheap_model: str = "deepseek-v4-pro"
     primary_model: str = "deepseek-v4-pro"
     perspective_model: str = "kimi-k2.6"
     reviewer_model: str = "doubao-seed-2.1-pro"

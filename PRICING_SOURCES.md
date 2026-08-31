@@ -6,8 +6,8 @@ the uncached price, so cache discounts are never assumed during authorization.
 
 | Alias | Provider API model | Official input / 1M | Official output / 1M | Ledger CNY input / output | Official source |
 |---|---|---:|---:|---:|---|
-| `deepseek-v4-flash` | `deepseek-v4-flash` | US$0.14 | US$0.28 | ¥2 / ¥3 | [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing) |
-| `deepseek-v4-pro` | `deepseek-v4-pro` | US$0.435 | US$0.87 | ¥4 / ¥7 | [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing) |
+| `deepseek-v4-flash` | `ARK_DEEPSEEK_MODEL_ID` | n/a | n/a | ¥12 / ¥24 conservative ceiling | [Volcengine Ark](https://www.volcengine.com/docs/82379/1544106) |
+| `deepseek-v4-pro` | `ARK_DEEPSEEK_MODEL_ID` | n/a | n/a | ¥12 / ¥24 conservative ceiling | [Volcengine Ark](https://www.volcengine.com/docs/82379/1544106) |
 | `kimi-k2.6` | `kimi-k2.6` | ¥6.50 | ¥27 | ¥8 / ¥32 | [Kimi](https://platform.kimi.com/docs/pricing/chat-k26) |
 | `kimi-k3` | `kimi-k3` | ¥20 | ¥100 | ¥24 / ¥120 | [Kimi](https://platform.kimi.com/docs/pricing/chat-k3) |
 | `doubao-seed-2.1-pro` | user-configured Ark endpoint/model ID | ¥6 | ¥30 | ¥6 / ¥30 | [Volcengine](https://www.volcengine.com/product/ark) |

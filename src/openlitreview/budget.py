@@ -42,6 +42,7 @@ class BudgetLedger:
 
     def _initialize(self) -> None:
         with sqlite3.connect(self.path) as connection:
+            connection.row_factory = sqlite3.Row
             connection.executescript(
                 """
                 PRAGMA journal_mode=WAL;
@@ -70,6 +71,19 @@ class BudgetLedger:
                 );
                 """
             )
+            legacy_failures = connection.execute(
+                "SELECT task_id FROM task_budget WHERE status = 'failed_reserved'"
+            ).fetchall()
+            for row in legacy_failures:
+                actual = self._task_actual(connection, row["task_id"])
+                connection.execute(
+                    """
+                    UPDATE task_budget
+                    SET actual_cny = ?, status = 'failed', updated_at = ?
+                    WHERE task_id = ?
+                    """,
+                    (str(actual), _now(), row["task_id"]),
+                )
 
     def reserve_task(self, task_id: str, amount_cny: Decimal | None = None) -> dict[str, str]:
         amount = amount_cny or Decimal(str(self.settings.task_reservation_cny))
@@ -216,12 +230,14 @@ class BudgetLedger:
 
     def fail_task(self, task_id: str) -> None:
         with self._transaction() as connection:
+            actual = self._task_actual(connection, task_id)
             connection.execute(
                 """
-                UPDATE task_budget SET status = 'failed_reserved', updated_at = ?
+                UPDATE task_budget
+                SET actual_cny = ?, status = 'failed', updated_at = ?
                 WHERE task_id = ?
                 """,
-                (_now(), task_id),
+                (str(actual), _now(), task_id),
             )
 
     def task_summary(self, task_id: str) -> dict[str, str]:
@@ -267,7 +283,7 @@ class BudgetLedger:
         return sum(
             (
                 Decimal(row["actual_cny"])
-                if row["status"] == "completed"
+                if row["status"] in {"completed", "failed"}
                 else Decimal(row["reserved_cny"])
             )
             for row in rows

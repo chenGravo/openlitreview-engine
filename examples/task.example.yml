@@ -53,7 +53,7 @@ budget:
 
 models:
   enabled: true
-  cheap_model: deepseek-v4-flash
+  cheap_model: deepseek-v4-pro
   primary_model: deepseek-v4-pro
   perspective_model: kimi-k2.6
   reviewer_model: doubao-seed-2.1-pro

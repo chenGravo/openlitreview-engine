@@ -84,6 +84,25 @@ async def execute_pipeline(
         cards, extraction_log = await extract_evidence_cards(
             task, evidence_papers, fulltext_results, client, output
         )
+        evidence_paper_count = len({card.record_id for card in cards})
+        if evidence_paper_count < task.quality.minimum_evidence_papers:
+            quality = audit_run(task, search_run, cards, None, None, output)
+            _write_provenance(
+                output,
+                task,
+                queries,
+                execution_id=execution_id_for_run,
+                model_calls_enabled=True,
+            )
+            ledger.complete_task(execution_id_for_run)
+            ledger.export_json(output / "private_work" / "budget_month.json")
+            return {
+                "task_id": task_id,
+                "stage": "evidence_quality_gate",
+                "output": str(output),
+                "quality": quality,
+                "evidence_extractions": len(extraction_log),
+            }
         if task.compliance.ai_body_generation_allowed is False:
             quality = audit_run(task, search_run, cards, None, None, output)
             _write_provenance(
