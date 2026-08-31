@@ -10,7 +10,7 @@ from typing import Any
 from .audit import audit_run
 from .budget import BudgetLedger
 from .config import dump_task_contract, load_task
-from .evidence import extract_evidence_cards
+from .evidence import extract_evidence_cards, load_evidence_seed
 from .fulltext import collect_fulltexts
 from .integrity import check_publication_updates
 from .llm import LLMClient
@@ -81,8 +81,15 @@ async def execute_pipeline(
         evidence_papers = _select_evidence_papers(
             search_run.papers, fulltext_results, task.search.target_fulltexts
         )
+        seed_cards, seed_log = load_evidence_seed(task_path, task.evidence_seed_file)
         cards, extraction_log = await extract_evidence_cards(
-            task, evidence_papers, fulltext_results, client, output
+            task,
+            evidence_papers,
+            fulltext_results,
+            client,
+            output,
+            initial_cards=seed_cards,
+            initial_log=seed_log,
         )
         evidence_paper_count = len({card.record_id for card in cards})
         if evidence_paper_count < task.quality.minimum_evidence_papers:

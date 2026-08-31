@@ -73,6 +73,7 @@ def dump_task_contract(task: TaskSpec, path: str | Path) -> None:
         "target_fulltexts": task.search.target_fulltexts,
         "user_requirements": task.user_requirements,
         "writing_requirements_file": task.writing_requirements_file,
+        "evidence_seed_file": task.evidence_seed_file,
         "output": task.output.model_dump(mode="json"),
         "quality": task.quality.model_dump(mode="json"),
         "budget": task.budget.model_dump(mode="json"),

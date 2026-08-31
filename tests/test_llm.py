@@ -6,6 +6,7 @@ from openlitreview.llm import (
     ModelResponseError,
     _build_request,
     _extract_content_and_usage,
+    _is_ark_set_limit_exceeded,
     _parse_json_content,
     _safe_http_error_detail,
 )
@@ -52,6 +53,9 @@ def test_deepseek_uses_ark_route_and_configured_model() -> None:
     assert provider.model_envs == ("ARK_DEEPSEEK_MODEL_ID",)
     assert provider.require_configured_model is True
     assert provider.thinking_mode == "disabled"
+    assert provider.fallback_base_url == "https://api.deepseek.com"
+    assert provider.fallback_api_key_envs == ("DEEPSEEK_API_KEY",)
+    assert provider.fallback_model == "deepseek-v4-pro"
 
     _, body = _build_request(
         provider,
@@ -78,6 +82,22 @@ def test_http_error_detail_excludes_message_and_contact_data() -> None:
     detail = _safe_http_error_detail(response)
     assert detail == " (type=insufficient_balance, code=billing_error)"
     assert "private@example.com" not in detail
+
+
+def test_only_ark_set_limit_error_activates_quality_trial_fallback() -> None:
+    request = httpx.Request("POST", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")
+    set_limit = httpx.Response(
+        429,
+        request=request,
+        json={"error": {"type": "TooManyRequests", "code": "SetLimitExceeded"}},
+    )
+    burst = httpx.Response(
+        429,
+        request=request,
+        json={"error": {"type": "TooManyRequests", "code": "RequestBurstTooFast"}},
+    )
+    assert _is_ark_set_limit_exceeded(set_limit) is True
+    assert _is_ark_set_limit_exceeded(burst) is False
 
 
 def test_responses_request_does_not_store_provider_state() -> None:

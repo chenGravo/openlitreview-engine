@@ -22,6 +22,9 @@ class ProviderConfig:
     max_tokens_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
     temperature_override: float | None = None
     thinking_mode: Literal["enabled", "disabled"] | None = None
+    fallback_base_url: str | None = None
+    fallback_api_key_envs: tuple[str, ...] = ()
+    fallback_model: str | None = None
 
 
 PROVIDERS: dict[str, ProviderConfig] = {
@@ -32,6 +35,9 @@ PROVIDERS: dict[str, ProviderConfig] = {
         model_envs=("ARK_DEEPSEEK_MODEL_ID",),
         require_configured_model=True,
         thinking_mode="disabled",
+        fallback_base_url="https://api.deepseek.com",
+        fallback_api_key_envs=("DEEPSEEK_API_KEY",),
+        fallback_model="deepseek-v4-pro",
     ),
     "kimi": ProviderConfig(
         base_url="https://api.moonshot.cn/v1",
@@ -110,6 +116,22 @@ class LLMClient:
                     headers={"Authorization": f"Bearer {api_key}"},
                     json=body,
                 )
+                if (
+                    self.ledger.settings.quality_trial_unlimited
+                    and _is_ark_set_limit_exceeded(response)
+                    and provider.fallback_base_url
+                    and provider.fallback_model
+                ):
+                    fallback_key = _first_environment_value(
+                        provider.fallback_api_key_envs
+                    )
+                    if fallback_key:
+                        fallback_body = {**body, "model": provider.fallback_model}
+                        response = await client.post(
+                            f"{provider.fallback_base_url.rstrip('/')}/{endpoint}",
+                            headers={"Authorization": f"Bearer {fallback_key}"},
+                            json=fallback_body,
+                        )
                 response.raise_for_status()
                 payload = response.json()
             content, actual_input, actual_output = _extract_content_and_usage(
@@ -269,3 +291,14 @@ def _safe_http_error_detail(response: httpx.Response) -> str:
             if cleaned:
                 safe_parts.append(f"{label}={cleaned}")
     return f" ({', '.join(safe_parts)})" if safe_parts else ""
+
+
+def _is_ark_set_limit_exceeded(response: httpx.Response) -> bool:
+    if response.status_code != 429:
+        return False
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    return isinstance(error, dict) and error.get("code") == "SetLimitExceeded"

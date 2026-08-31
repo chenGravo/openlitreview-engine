@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from openlitreview.evidence import EvidenceExtractionError, extract_evidence_cards
-from openlitreview.schemas import PaperRecord, TaskSpec
+from openlitreview.schemas import EvidenceCard, PaperRecord, TaskSpec
 
 
 class FailingClient:
@@ -44,3 +44,41 @@ async def test_evidence_extraction_stops_after_three_consecutive_failures(tmp_pa
     assert client.calls == 3
     assert client.model_aliases == ["deepseek-v4-pro"] * 3
     assert (tmp_path / "evidence" / "extraction_log.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_evidence_seed_skips_already_processed_paper(tmp_path) -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={"enabled": True},
+        search={"target_fulltexts": 10},
+    )
+    papers = [
+        PaperRecord(record_id="seeded", title="Seeded paper", abstract="A" * 500),
+        PaperRecord(record_id="new", title="New paper", abstract="B" * 500),
+        PaperRecord(record_id="third", title="Third paper", abstract="C" * 500),
+        PaperRecord(record_id="fourth", title="Fourth paper", abstract="D" * 500),
+    ]
+    seed = EvidenceCard(
+        evidence_id="seed_e1",
+        record_id="seeded",
+        claim="Seed claim",
+        evidence_type="abstract",
+        result="Seed result",
+    )
+    client = FailingClient()
+
+    with pytest.raises(EvidenceExtractionError, match="three consecutive"):
+        await extract_evidence_cards(
+            task,
+            papers,
+            [],
+            client,
+            tmp_path,
+            initial_cards=[seed],
+            initial_log=[{"record_id": "seeded", "status": "ok", "cards": 1}],
+        )
+
+    assert client.calls == 3

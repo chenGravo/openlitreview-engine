@@ -197,6 +197,7 @@ class TaskSpec(BaseModel):
     exclude_terms: list[str] = Field(default_factory=list, max_length=100)
     user_requirements: str = ""
     writing_requirements_file: str | None = None
+    evidence_seed_file: str | None = None
     search: SearchSettings = Field(default_factory=SearchSettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)

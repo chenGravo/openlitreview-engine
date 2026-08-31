@@ -8,7 +8,7 @@ from typing import Any
 from .fulltext import FullTextResult
 from .llm import LLMClient
 from .prompts import EVIDENCE_SYSTEM, evidence_prompt
-from .schemas import EvidenceCard, PaperRecord, TaskSpec
+from .schemas import EvidenceCard, PaperRecord, TaskSpec, safe_resolve
 from .storage import citation_key
 
 
@@ -22,16 +22,22 @@ async def extract_evidence_cards(
     fulltexts: list[FullTextResult],
     client: LLMClient,
     output: Path,
+    *,
+    initial_cards: list[EvidenceCard] | None = None,
+    initial_log: list[dict[str, Any]] | None = None,
 ) -> tuple[list[EvidenceCard], list[dict[str, Any]]]:
     fulltext_by_record = {
         result.record_id: result
         for result in fulltexts
         if result.status == "extracted" and result.text_path
     }
-    cards: list[EvidenceCard] = []
-    log: list[dict[str, Any]] = []
+    cards = list(initial_cards or [])
+    log = list(initial_log or [])
+    processed_record_ids = {card.record_id for card in cards}
     consecutive_failures = 0
     for paper in papers[: task.search.target_fulltexts]:
+        if paper.record_id in processed_record_ids:
+            continue
         if paper.publication_status in {"retracted", "withdrawn"}:
             log.append(
                 {
@@ -87,6 +93,26 @@ async def extract_evidence_cards(
                     "Evidence extraction stopped after three consecutive model failures"
                 ) from exc
     write_evidence_outputs(cards, log, papers, output)
+    return cards, log
+
+
+def load_evidence_seed(
+    task_path: str | Path, relative_path: str | None
+) -> tuple[list[EvidenceCard], list[dict[str, Any]]]:
+    if not relative_path:
+        return [], []
+    seed_path = safe_resolve(Path(task_path).parent, relative_path)
+    if not seed_path.is_file() or seed_path.is_symlink():
+        raise FileNotFoundError(f"Evidence seed file not found: {seed_path.name}")
+    payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Evidence seed must contain a JSON object")
+    raw_cards = payload.get("cards") or []
+    raw_log = payload.get("log") or []
+    if not isinstance(raw_cards, list) or not isinstance(raw_log, list):
+        raise ValueError("Evidence seed cards and log must be arrays")
+    cards = [EvidenceCard.model_validate(card) for card in raw_cards]
+    log = [dict(item) for item in raw_log if isinstance(item, dict)]
     return cards, log
 
 
