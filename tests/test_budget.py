@@ -131,3 +131,28 @@ def test_failed_task_releases_unused_reservation(tmp_path) -> None:
     assert task["status"] == "failed"
     assert task["actual_cny"] == str(actual)
     assert ledger.month_summary()["internal_used_or_reserved_cny"] == str(actual)
+
+
+def test_quality_trial_unlimited_records_calls_without_enforcing_caps(tmp_path) -> None:
+    settings = BudgetSettings(
+        quality_trial_unlimited=True,
+        task_reservation_cny=1,
+        single_request_cap_cny=1,
+        per_model_task_cap_cny=1,
+        monthly_per_model_cap_cny=1,
+    )
+    ledger = BudgetLedger(tmp_path / "budget.sqlite", settings)
+    ledger.reserve_task("quality-trial", Decimal("1"))
+
+    call_id, estimate = ledger.authorize_call(
+        "quality-trial",
+        "deepseek-v4-pro",
+        input_tokens=1_000_000,
+        max_output_tokens=100_000,
+    )
+
+    assert estimate > Decimal("1")
+    actual = ledger.reconcile_call(call_id, 1_000_000, 100_000)
+    summary = ledger.complete_task("quality-trial")
+    assert summary["actual_cny"] == str(actual)
+    assert ledger.month_summary()["quality_trial_unlimited"] is True

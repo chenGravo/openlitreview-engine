@@ -56,7 +56,7 @@ async def extract_evidence_cards(
                 model_alias=task.models.cheap_model,
                 system=EVIDENCE_SYSTEM,
                 prompt=evidence_prompt(paper, text, verified),
-                max_output_tokens=1_500,
+                max_output_tokens=6_000,
                 temperature=0.0,
             )
             extracted = payload.get("evidence") or []

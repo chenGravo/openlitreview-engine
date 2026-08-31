@@ -97,7 +97,7 @@ class BudgetLedger:
                 return dict(existing)
             used = self._month_reserved_or_spent(connection, month)
             hard_stop = Decimal(str(self.settings.monthly_hard_stop_cny))
-            if used + amount > hard_stop:
+            if not self.settings.quality_trial_unlimited and used + amount > hard_stop:
                 raise BudgetExceeded(
                     f"Monthly internal hard stop would be exceeded: {used} + {amount} > {hard_stop}"
                 )
@@ -124,7 +124,7 @@ class BudgetLedger:
             price.estimate(input_tokens, max_output_tokens) * uncertainty_multiplier
         ).quantize(Decimal("0.0001"), rounding=ROUND_UP)
         single_cap = Decimal(str(self.settings.single_request_cap_cny))
-        if estimated > single_cap:
+        if not self.settings.quality_trial_unlimited and estimated > single_cap:
             raise BudgetExceeded(f"Single request estimate {estimated} exceeds cap {single_cap}")
         now = _now()
         call_id = uuid.uuid4().hex
@@ -138,7 +138,10 @@ class BudgetLedger:
                 raise BudgetExceeded(f"Task budget is not active: {task['status']}")
             consumed = self._task_calls_reserved_or_spent(connection, task_id)
             reserved = Decimal(task["reserved_cny"])
-            if consumed + estimated > reserved:
+            if (
+                not self.settings.quality_trial_unlimited
+                and consumed + estimated > reserved
+            ):
                 raise BudgetExceeded(
                     f"Task reservation would be exceeded: {consumed} + {estimated} > {reserved}"
                 )
@@ -146,7 +149,10 @@ class BudgetLedger:
                 connection, task_id, price.provider
             )
             model_cap = Decimal(str(self.settings.per_model_task_cap_cny))
-            if model_consumed + estimated > model_cap:
+            if (
+                not self.settings.quality_trial_unlimited
+                and model_consumed + estimated > model_cap
+            ):
                 raise BudgetExceeded(
                     "Per-model/provider task cap would be exceeded for "
                     f"{price.provider}: {model_consumed} + {estimated} > {model_cap}"
@@ -155,7 +161,10 @@ class BudgetLedger:
                 connection, task["month"], price.provider
             )
             monthly_model_cap = Decimal(str(self.settings.monthly_per_model_cap_cny))
-            if monthly_model_consumed + estimated > monthly_model_cap:
+            if (
+                not self.settings.quality_trial_unlimited
+                and monthly_model_consumed + estimated > monthly_model_cap
+            ):
                 raise BudgetExceeded(
                     "Monthly per-model/provider cap would be exceeded for "
                     f"{price.provider}: {monthly_model_consumed} + {estimated} "
@@ -260,6 +269,7 @@ class BudgetLedger:
             used = self._month_reserved_or_spent(connection, month)
         return {
             "month": month,
+            "quality_trial_unlimited": self.settings.quality_trial_unlimited,
             "internal_used_or_reserved_cny": str(used),
             "warning_cny": str(self.settings.monthly_warning_cny),
             "hard_stop_cny": str(self.settings.monthly_hard_stop_cny),

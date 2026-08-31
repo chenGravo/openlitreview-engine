@@ -76,6 +76,7 @@ class OutputSettings(BaseModel):
 class BudgetSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    quality_trial_unlimited: bool = False
     task_reservation_cny: float = Field(default=15.0, gt=0, le=30)
     monthly_warning_cny: float = Field(default=80.0, gt=0, le=100)
     monthly_hard_stop_cny: float = Field(default=90.0, gt=0, le=100)
