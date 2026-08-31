@@ -51,6 +51,17 @@ def test_deepseek_uses_ark_route_and_configured_model() -> None:
     assert provider.api_key_envs == ("ARK_DEEPSEEK_API_KEY",)
     assert provider.model_envs == ("ARK_DEEPSEEK_MODEL_ID",)
     assert provider.require_configured_model is True
+    assert provider.thinking_mode == "disabled"
+
+    _, body = _build_request(
+        provider,
+        model="deepseek-v4-pro-260425",
+        system="Return JSON",
+        prompt="Test",
+        max_output_tokens=64,
+        temperature=0.0,
+    )
+    assert body["thinking"] == {"type": "disabled"}
 
 
 def test_http_error_detail_excludes_message_and_contact_data() -> None:

@@ -31,6 +31,7 @@ PROVIDERS: dict[str, ProviderConfig] = {
         api_key_envs=("ARK_DEEPSEEK_API_KEY",),
         model_envs=("ARK_DEEPSEEK_MODEL_ID",),
         require_configured_model=True,
+        thinking_mode="disabled",
     ),
     "kimi": ProviderConfig(
         base_url="https://api.moonshot.cn/v1",
