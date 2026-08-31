@@ -51,9 +51,7 @@ async def execute_pipeline(
                 queries = await _expand_queries(task, client)
 
         search_run = await run_search(task, queries)
-        checked_count = min(
-            len(search_run.papers), max(task.search.target_fulltexts * 2, 100)
-        )
+        checked_count = min(len(search_run.papers), max(task.search.target_fulltexts * 2, 100))
         checked = await check_publication_updates(search_run.papers[:checked_count])
         search_run.papers = [*checked, *search_run.papers[checked_count:]]
         write_search_outputs(search_run, task, output)
@@ -74,7 +72,7 @@ async def execute_pipeline(
                 "quality": quality,
             }
 
-        seed_cards, seed_log, seed_papers = load_evidence_seed(
+        seed_cards, seed_log, seed_papers, seed_digest = load_evidence_seed(
             task_path, task.evidence_seed_file
         )
         selected_seed_papers = _select_seed_papers(
@@ -83,13 +81,9 @@ async def execute_pipeline(
         search_run.papers = _merge_papers(selected_seed_papers, search_run.papers)
         write_search_outputs(search_run, task, output)
         seeded_keys = {paper.canonical_key() for paper in selected_seed_papers}
-        remaining_target = max(
-            task.search.target_fulltexts - len(selected_seed_papers), 0
-        )
+        remaining_target = max(task.search.target_fulltexts - len(selected_seed_papers), 0)
         fulltext_candidates = [
-            paper
-            for paper in search_run.papers
-            if paper.canonical_key() not in seeded_keys
+            paper for paper in search_run.papers if paper.canonical_key() not in seeded_keys
         ]
         fulltext_results = await collect_fulltexts(
             fulltext_candidates[: task.search.screening_pool],
@@ -152,7 +146,12 @@ async def execute_pipeline(
             }
 
         markdown, _, reviewer = await generate_review(
-            task, evidence_papers, cards, client, output
+            task,
+            evidence_papers,
+            cards,
+            client,
+            output,
+            initial_evidence_digest=seed_digest,
         )
         quality = audit_run(task, search_run, cards, markdown, reviewer, output)
         render_report = None

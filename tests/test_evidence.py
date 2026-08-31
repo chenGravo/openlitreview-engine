@@ -120,9 +120,9 @@ async def test_orphan_seed_cards_are_filtered_before_outputs(tmp_path) -> None:
             initial_log=[{"record_id": orphan.record_id, "status": "ok"}],
         )
 
-    assert "not-in-current-papers" not in (
-        tmp_path / "evidence" / "evidence_cards.json"
-    ).read_text(encoding="utf-8")
+    assert "not-in-current-papers" not in (tmp_path / "evidence" / "evidence_cards.json").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_evidence_seed_loads_paper_metadata(tmp_path) -> None:
@@ -140,8 +140,9 @@ def test_evidence_seed_loads_paper_metadata(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    cards, log, papers = load_evidence_seed(tmp_path / "task.json", "seed.json")
+    cards, log, papers, digest = load_evidence_seed(tmp_path / "task.json", "seed.json")
 
     assert cards[0].record_id == "p1"
     assert log[0]["status"] == "ok"
     assert papers[0].doi == "10.1/test"
+    assert digest == []

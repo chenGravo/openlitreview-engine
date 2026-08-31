@@ -31,12 +31,8 @@ async def extract_evidence_cards(
         for result in fulltexts
         if result.status == "extracted" and result.text_path
     }
-    allowed_record_ids = {
-        paper.record_id for paper in papers[: task.search.target_fulltexts]
-    }
-    cards = [
-        card for card in (initial_cards or []) if card.record_id in allowed_record_ids
-    ]
+    allowed_record_ids = {paper.record_id for paper in papers[: task.search.target_fulltexts]}
+    cards = [card for card in (initial_cards or []) if card.record_id in allowed_record_ids]
     log = [
         item
         for item in (initial_log or [])
@@ -107,9 +103,14 @@ async def extract_evidence_cards(
 
 def load_evidence_seed(
     task_path: str | Path, relative_path: str | None
-) -> tuple[list[EvidenceCard], list[dict[str, Any]], list[PaperRecord]]:
+) -> tuple[
+    list[EvidenceCard],
+    list[dict[str, Any]],
+    list[PaperRecord],
+    list[dict[str, Any]],
+]:
     if not relative_path:
-        return [], [], []
+        return [], [], [], []
     seed_path = safe_resolve(Path(task_path).parent, relative_path)
     if not seed_path.is_file() or seed_path.is_symlink():
         raise FileNotFoundError(f"Evidence seed file not found: {seed_path.name}")
@@ -119,12 +120,14 @@ def load_evidence_seed(
     raw_cards = payload.get("cards") or []
     raw_log = payload.get("log") or []
     raw_papers = payload.get("papers") or []
-    if not all(isinstance(value, list) for value in (raw_cards, raw_log, raw_papers)):
-        raise ValueError("Evidence seed cards, log, and papers must be arrays")
+    raw_digest = payload.get("evidence_digest_batches") or []
+    if not all(isinstance(value, list) for value in (raw_cards, raw_log, raw_papers, raw_digest)):
+        raise ValueError("Evidence seed cards, log, papers, and digest must be arrays")
     cards = [EvidenceCard.model_validate(card) for card in raw_cards]
     log = [dict(item) for item in raw_log if isinstance(item, dict)]
     papers = [PaperRecord.model_validate(paper) for paper in raw_papers]
-    return cards, log, papers
+    digest = [dict(item) for item in raw_digest if isinstance(item, dict)]
+    return cards, log, papers, digest
 
 
 def _cards_from_payload(
@@ -142,9 +145,7 @@ def _cards_from_payload(
         if not claim or not result:
             continue
         limitations = [
-            str(value).strip()
-            for value in item.get("limitations") or []
-            if str(value).strip()
+            str(value).strip() for value in item.get("limitations") or [] if str(value).strip()
         ]
         cards.append(
             EvidenceCard(

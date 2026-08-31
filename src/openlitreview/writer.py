@@ -43,9 +43,17 @@ async def generate_review(
     cards: list[EvidenceCard],
     client: LLMClient,
     output: Path,
+    *,
+    initial_evidence_digest: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
     raw_evidence_packet = _evidence_packet(papers, cards)
-    evidence_digest = await _build_evidence_digest(task, raw_evidence_packet, client, output)
+    evidence_digest = await _build_evidence_digest(
+        task,
+        raw_evidence_packet,
+        client,
+        output,
+        initial_digest=initial_evidence_digest,
+    )
     perspective_payload = await _audit_perspectives(task, evidence_digest, client)
     perspective_path = output / "audit" / "prewriting_perspective_audit.json"
     perspective_path.write_text(
@@ -226,12 +234,26 @@ async def _build_evidence_digest(
     evidence_packet: list[dict[str, Any]],
     client: LLMClient,
     output: Path,
+    *,
+    initial_digest: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Compress all evidence hierarchically without exposing one oversized prompt."""
     batches = _paper_batches(evidence_packet, max_papers=8)
     digests: list[dict[str, Any]] = []
     checkpoint_path = output / "audit" / "evidence_digest_batches.json"
-    for batch_number, batch in enumerate(batches, start=1):
+    for batch_number, (batch, seed) in enumerate(
+        zip(batches, initial_digest or [], strict=False), start=1
+    ):
+        if int(seed.get("batch_number") or 0) != batch_number:
+            break
+        digests.append(_sanitize_batch_digest(seed, batch, batch_number=batch_number))
+    if digests:
+        checkpoint_path.write_text(
+            json.dumps(digests, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    for batch_number in range(len(digests) + 1, len(batches) + 1):
+        batch = batches[batch_number - 1]
         payload = await client.complete_json(
             model_alias=task.models.perspective_model,
             system=DIGEST_SYSTEM,
@@ -242,6 +264,10 @@ async def _build_evidence_digest(
                 '"quantitative_results":[],"null_or_conflicting_findings":[],'
                 '"limitations":[]}],"cross_source_observations":'
                 '[{"observation":"","evidence_ids":[]}]}\n'
+                "For each source summary, use at most 5 evidence_ids and at most 3 items "
+                "in each list. Keep every list item under 80 words. Be concise but retain "
+                "reported effect sizes, uncertainty, null results, safety boundaries, and "
+                "limitations.\n"
                 + json.dumps(
                     {
                         "task": _task_payload(task),
@@ -252,7 +278,7 @@ async def _build_evidence_digest(
                     ensure_ascii=False,
                 )
             ),
-            max_output_tokens=6_000,
+            max_output_tokens=16_000,
             temperature=0.0,
         )
         digests.append(_sanitize_batch_digest(payload, batch, batch_number=batch_number))
