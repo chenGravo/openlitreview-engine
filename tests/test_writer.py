@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from openlitreview.schemas import EvidenceCard, PaperRecord, TaskSpec
-from openlitreview.writer import generate_review
+from openlitreview.writer import _paper_batches, _sanitize_batch_digest, generate_review
 
 
 class FakeClient:
@@ -62,6 +62,15 @@ async def test_failed_independent_review_triggers_revision_and_rereview(tmp_path
     client = FakeClient(
         [
             {
+                "source_summaries": [
+                    {
+                        "citation_key": "ref_50c81ef030",
+                        "evidence_ids": ["e1"],
+                        "supported_findings": ["测试结果"],
+                    }
+                ]
+            },
+            {
                 "evidence_clusters": [],
                 "contradictions": [],
                 "outline_requirements": [],
@@ -75,12 +84,11 @@ async def test_failed_independent_review_triggers_revision_and_rereview(tmp_path
     )
     (tmp_path / "audit").mkdir()
 
-    markdown, payload, reviewer = await generate_review(
-        task, [paper], [card], client, tmp_path
-    )
+    markdown, payload, reviewer = await generate_review(task, [paper], [card], client, tmp_path)
 
-    assert client.calls == 6
+    assert client.calls == 7
     assert client.model_aliases == [
+        "kimi-k2.6",
         "kimi-k2.6",
         "deepseek-v4-pro",
         "deepseek-v4-pro",
@@ -121,6 +129,15 @@ async def test_explicit_same_model_review_is_labeled_as_same_model(tmp_path) -> 
     )
     client = FakeClient(
         [
+            {
+                "source_summaries": [
+                    {
+                        "citation_key": "ref_50c81ef030",
+                        "evidence_ids": ["e1"],
+                        "supported_findings": ["测试结果"],
+                    }
+                ]
+            },
             {"evidence_clusters": [], "contradictions": []},
             {"central_argument": "测试", "sections": []},
             _draft("正文。[@ref_50c81ef030]"),
@@ -131,6 +148,47 @@ async def test_explicit_same_model_review_is_labeled_as_same_model(tmp_path) -> 
 
     await generate_review(task, [paper], [card], client, tmp_path)
 
-    assert client.model_aliases == ["kimi-k2.6"] * 4
+    assert client.model_aliases == ["kimi-k2.6"] * 5
+    assert (tmp_path / "audit" / "evidence_digest_batches.json").is_file()
     assert (tmp_path / "audit" / "same_model_review.json").is_file()
     assert not (tmp_path / "audit" / "independent_model_review.json").exists()
+
+
+def test_digest_batches_preserve_every_source_and_drop_unknown_ids() -> None:
+    packet = [
+        {
+            "citation_key": f"ref_{index}",
+            "paper_title": f"Paper {index}",
+            "paper_year": 2020 + index,
+            "evidence_id": f"e{index}",
+            "claim": "claim",
+            "result": "result",
+            "limitations": ["limited"],
+        }
+        for index in range(10)
+    ]
+    batches = _paper_batches(packet, max_papers=8)
+
+    assert [len(batch) for batch in batches] == [8, 2]
+    digest = _sanitize_batch_digest(
+        {
+            "source_summaries": [
+                {
+                    "citation_key": "ref_0",
+                    "evidence_ids": ["e0", "invented"],
+                    "supported_findings": ["supported"],
+                },
+                {"citation_key": "invented", "evidence_ids": ["invented"]},
+            ],
+            "cross_source_observations": [
+                {"observation": "valid", "evidence_ids": ["e0", "invented"]},
+                {"observation": "unsupported", "evidence_ids": ["invented"]},
+            ],
+        },
+        batches[0],
+        batch_number=1,
+    )
+
+    assert len(digest["source_summaries"]) == 8
+    assert digest["source_summaries"][0]["evidence_ids"] == ["e0"]
+    assert digest["cross_source_observations"] == [{"observation": "valid", "evidence_ids": ["e0"]}]

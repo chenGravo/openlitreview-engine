@@ -29,6 +29,13 @@ independent evidence audit. Correct every reported issue using only the supplied
 Preserve supported nuance, disagreements, null results, limitations, and Pandoc citation keys.
 Never invent facts or citations. Return the complete revised review as strict JSON only."""
 
+DIGEST_SYSTEM = """You create a loss-minimizing evidence digest for one batch of an audited
+academic evidence set. Produce exactly one source summary for every supplied citation key. Retain
+quantitative results, null findings, disagreements, population and intervention boundaries,
+study-design strength, medical-safety uncertainty, and limitations. Use only supplied evidence
+IDs and citation keys. Do not infer missing results or invent facts, sources, identifiers, or
+certainty. Return strict JSON only."""
+
 
 async def generate_review(
     task: TaskSpec,
@@ -37,8 +44,9 @@ async def generate_review(
     client: LLMClient,
     output: Path,
 ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
-    evidence_packet = _evidence_packet(papers, cards)
-    perspective_payload = await _audit_perspectives(task, evidence_packet, client)
+    raw_evidence_packet = _evidence_packet(papers, cards)
+    evidence_digest = await _build_evidence_digest(task, raw_evidence_packet, client, output)
+    perspective_payload = await _audit_perspectives(task, evidence_digest, client)
     perspective_path = output / "audit" / "prewriting_perspective_audit.json"
     perspective_path.write_text(
         json.dumps(perspective_payload, ensure_ascii=False, indent=2) + "\n",
@@ -54,7 +62,7 @@ async def generate_review(
             + json.dumps(
                 {
                     "task": _task_payload(task),
-                    "evidence": evidence_packet,
+                    "evidence_digest": evidence_digest,
                     "perspective_audit": perspective_payload,
                 },
                 ensure_ascii=False,
@@ -77,7 +85,7 @@ async def generate_review(
                 {
                     "task": _task_payload(task),
                     "approved_outline": outline_payload,
-                    "evidence": evidence_packet,
+                    "evidence_digest": evidence_digest,
                     "perspective_audit": perspective_payload,
                 },
                 ensure_ascii=False,
@@ -105,9 +113,7 @@ async def generate_review(
             else "independent_model_review"
         )
         for review_round in range(task.models.max_revision_rounds + 1):
-            reviewer_payload = await _review_draft(
-                task, evidence_packet, markdown, client
-            )
+            reviewer_payload = await _review_draft(task, evidence_digest, markdown, client)
             review_path = output / "audit" / f"{review_prefix}_{review_round + 1}.json"
             review_path.write_text(
                 json.dumps(reviewer_payload, ensure_ascii=False, indent=2) + "\n",
@@ -128,7 +134,7 @@ async def generate_review(
                     + json.dumps(
                         {
                             "task": _task_payload(task),
-                            "evidence": evidence_packet,
+                            "evidence_digest": evidence_digest,
                             "current_draft": markdown,
                             "independent_audit": reviewer_payload,
                         },
@@ -160,7 +166,7 @@ async def generate_review(
 
 async def _audit_perspectives(
     task: TaskSpec,
-    evidence_packet: list[dict[str, Any]],
+    evidence_digest: list[dict[str, Any]],
     client: LLMClient,
 ) -> dict[str, Any]:
     model_alias = task.models.perspective_model
@@ -177,19 +183,19 @@ async def _audit_perspectives(
             + json.dumps(
                 {
                     "task": _task_payload(task),
-                    "evidence": evidence_packet,
+                    "evidence_digest": evidence_digest,
                 },
                 ensure_ascii=False,
             )
         ),
-        max_output_tokens=3_000,
+        max_output_tokens=6_000,
         temperature=0.2,
     )
 
 
 async def _review_draft(
     task: TaskSpec,
-    evidence_packet: list[dict[str, Any]],
+    evidence_digest: list[dict[str, Any]],
     markdown: str,
     client: LLMClient,
 ) -> dict[str, Any]:
@@ -204,15 +210,200 @@ async def _review_draft(
             + json.dumps(
                 {
                     "task": _task_payload(task),
-                    "evidence": evidence_packet,
+                    "evidence_digest": evidence_digest,
                     "draft_markdown": markdown,
                 },
                 ensure_ascii=False,
             )
         ),
-        max_output_tokens=5_000,
+        max_output_tokens=6_000,
         temperature=0.0,
     )
+
+
+async def _build_evidence_digest(
+    task: TaskSpec,
+    evidence_packet: list[dict[str, Any]],
+    client: LLMClient,
+    output: Path,
+) -> list[dict[str, Any]]:
+    """Compress all evidence hierarchically without exposing one oversized prompt."""
+    batches = _paper_batches(evidence_packet, max_papers=8)
+    digests: list[dict[str, Any]] = []
+    checkpoint_path = output / "audit" / "evidence_digest_batches.json"
+    for batch_number, batch in enumerate(batches, start=1):
+        payload = await client.complete_json(
+            model_alias=task.models.perspective_model,
+            system=DIGEST_SYSTEM,
+            prompt=(
+                "Return schema: "
+                '{"source_summaries":[{"citation_key":"","evidence_ids":[],'
+                '"design_and_population":"","supported_findings":[],'
+                '"quantitative_results":[],"null_or_conflicting_findings":[],'
+                '"limitations":[]}],"cross_source_observations":'
+                '[{"observation":"","evidence_ids":[]}]}\n'
+                + json.dumps(
+                    {
+                        "task": _task_payload(task),
+                        "batch_number": batch_number,
+                        "batch_count": len(batches),
+                        "sources": batch,
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            max_output_tokens=6_000,
+            temperature=0.0,
+        )
+        digests.append(_sanitize_batch_digest(payload, batch, batch_number=batch_number))
+        checkpoint_path.write_text(
+            json.dumps(digests, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return digests
+
+
+def _paper_batches(
+    evidence_packet: list[dict[str, Any]], *, max_papers: int
+) -> list[list[dict[str, Any]]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for item in evidence_packet:
+        key = str(item.get("citation_key") or "").strip()
+        if not key:
+            continue
+        source = by_key.setdefault(
+            key,
+            {
+                "citation_key": key,
+                "paper_title": item.get("paper_title"),
+                "paper_year": item.get("paper_year"),
+                "evidence": [],
+            },
+        )
+        source["evidence"].append(
+            {
+                "evidence_id": item.get("evidence_id"),
+                "study_design": item.get("study_design"),
+                "population": item.get("population"),
+                "claim": item.get("claim"),
+                "result": item.get("result"),
+                "limitations": item.get("limitations"),
+                "evidence_type": item.get("evidence_type"),
+                "locator": item.get("locator"),
+                "confidence": item.get("confidence"),
+            }
+        )
+    sources = list(by_key.values())
+    return [sources[index : index + max_papers] for index in range(0, len(sources), max_papers)]
+
+
+def _sanitize_batch_digest(
+    payload: dict[str, Any],
+    batch: list[dict[str, Any]],
+    *,
+    batch_number: int,
+) -> dict[str, Any]:
+    allowed = {str(source["citation_key"]): source for source in batch}
+    allowed_evidence = {
+        str(item.get("evidence_id"))
+        for source in batch
+        for item in source.get("evidence") or []
+        if item.get("evidence_id")
+    }
+    summaries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in payload.get("source_summaries") or []:
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("citation_key") or "").strip()
+        if key not in allowed or key in seen:
+            continue
+        source = allowed[key]
+        summaries.append(
+            {
+                "citation_key": key,
+                "paper_title": source.get("paper_title"),
+                "paper_year": source.get("paper_year"),
+                "evidence_ids": _allowed_values(raw.get("evidence_ids"), allowed_evidence),
+                "design_and_population": str(raw.get("design_and_population") or "").strip(),
+                "supported_findings": _string_list(raw.get("supported_findings")),
+                "quantitative_results": _string_list(raw.get("quantitative_results")),
+                "null_or_conflicting_findings": _string_list(
+                    raw.get("null_or_conflicting_findings")
+                ),
+                "limitations": _string_list(raw.get("limitations")),
+            }
+        )
+        seen.add(key)
+    for key, source in allowed.items():
+        if key not in seen:
+            summaries.append(_fallback_source_summary(source))
+
+    observations: list[dict[str, Any]] = []
+    for raw in payload.get("cross_source_observations") or []:
+        if not isinstance(raw, dict):
+            continue
+        observation = str(raw.get("observation") or "").strip()
+        evidence_ids = _allowed_values(raw.get("evidence_ids"), allowed_evidence)
+        if observation and evidence_ids:
+            observations.append({"observation": observation, "evidence_ids": evidence_ids})
+    return {
+        "batch_number": batch_number,
+        "source_summaries": summaries,
+        "cross_source_observations": observations,
+    }
+
+
+def _fallback_source_summary(source: dict[str, Any]) -> dict[str, Any]:
+    evidence = [item for item in source.get("evidence") or [] if isinstance(item, dict)]
+    selected = evidence[:4]
+    findings = []
+    for item in selected:
+        claim = str(item.get("claim") or "").strip()
+        result = str(item.get("result") or "").strip()
+        finding = "；".join(part for part in (claim, result) if part)
+        if finding:
+            findings.append(finding)
+    limitations = list(
+        dict.fromkeys(text for item in selected for text in _string_list(item.get("limitations")))
+    )[:8]
+    designs = list(
+        dict.fromkeys(
+            str(item.get("study_design") or "").strip()
+            for item in evidence
+            if str(item.get("study_design") or "").strip()
+        )
+    )
+    populations = list(
+        dict.fromkeys(
+            str(item.get("population") or "").strip()
+            for item in evidence
+            if str(item.get("population") or "").strip()
+        )
+    )
+    return {
+        "citation_key": source.get("citation_key"),
+        "paper_title": source.get("paper_title"),
+        "paper_year": source.get("paper_year"),
+        "evidence_ids": [
+            str(item.get("evidence_id")) for item in selected if item.get("evidence_id")
+        ],
+        "design_and_population": "；".join([*designs[:3], *populations[:3]]),
+        "supported_findings": findings,
+        "quantitative_results": [],
+        "null_or_conflicting_findings": [],
+        "limitations": limitations,
+    }
+
+
+def _allowed_values(value: Any, allowed: set[str]) -> list[str]:
+    return [item for item in _string_list(value) if item in allowed]
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
 
 
 def render_review_markdown(payload: dict[str, Any]) -> str:
@@ -252,9 +443,7 @@ def render_review_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _evidence_packet(
-    papers: list[PaperRecord], cards: list[EvidenceCard]
-) -> list[dict[str, Any]]:
+def _evidence_packet(papers: list[PaperRecord], cards: list[EvidenceCard]) -> list[dict[str, Any]]:
     paper_map = {paper.record_id: paper for paper in papers}
     packet: list[dict[str, Any]] = []
     for card in cards:
