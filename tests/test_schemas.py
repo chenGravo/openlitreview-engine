@@ -59,6 +59,22 @@ def test_single_request_cap_cannot_exceed_monthly_per_model_cap() -> None:
         )
 
 
+def test_perspective_and_reviewer_can_share_an_independent_model() -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={
+            "enabled": True,
+            "cheap_model": "kimi-k2.6",
+            "primary_model": "kimi-k2.6",
+            "perspective_model": "doubao-seed-2.1-pro",
+            "reviewer_model": "doubao-seed-2.1-pro",
+        },
+    )
+    assert task.models.perspective_model == task.models.reviewer_model
+
+
 def test_sensitive_data_is_rejected() -> None:
     with pytest.raises(ValueError, match="personal or sensitive"):
         TaskSpec.model_validate(

@@ -131,13 +131,9 @@ class ModelSettings(BaseModel):
             and self.primary_model == self.reviewer_model
         ):
             raise ValueError("Independent reviewer_model must differ from primary_model")
-        if self.enabled and self.perspective_model in {
-            self.primary_model,
-            self.reviewer_model,
-        }:
+        if self.enabled and self.perspective_model == self.primary_model:
             raise ValueError(
-                "Independent perspective_model must differ from primary_model and "
-                "reviewer_model"
+                "Independent perspective_model must differ from primary_model"
             )
         return self
 
