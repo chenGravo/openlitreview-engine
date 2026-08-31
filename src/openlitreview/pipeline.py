@@ -47,7 +47,8 @@ async def execute_pipeline(
             )
             reserved = True
             client = LLMClient(ledger, execution_id_for_run)
-            queries = await _expand_queries(task, client)
+            if not task.evidence_seed_file:
+                queries = await _expand_queries(task, client)
 
         search_run = await run_search(task, queries)
         checked_count = min(
@@ -73,15 +74,36 @@ async def execute_pipeline(
                 "quality": quality,
             }
 
+        seed_cards, seed_log, seed_papers = load_evidence_seed(
+            task_path, task.evidence_seed_file
+        )
+        selected_seed_papers = _select_seed_papers(
+            seed_papers, seed_cards, task.search.target_fulltexts
+        )
+        search_run.papers = _merge_papers(selected_seed_papers, search_run.papers)
+        write_search_outputs(search_run, task, output)
+        seeded_keys = {paper.canonical_key() for paper in selected_seed_papers}
+        remaining_target = max(
+            task.search.target_fulltexts - len(selected_seed_papers), 0
+        )
+        fulltext_candidates = [
+            paper
+            for paper in search_run.papers
+            if paper.canonical_key() not in seeded_keys
+        ]
         fulltext_results = await collect_fulltexts(
-            search_run.papers[: task.search.screening_pool],
+            fulltext_candidates[: task.search.screening_pool],
             output / "private_work" / "fulltext",
-            target=task.search.target_fulltexts,
+            target=remaining_target,
         )
-        evidence_papers = _select_evidence_papers(
-            search_run.papers, fulltext_results, task.search.target_fulltexts
+        new_evidence_papers = _select_evidence_papers(
+            fulltext_candidates, fulltext_results, remaining_target
         )
-        seed_cards, seed_log = load_evidence_seed(task_path, task.evidence_seed_file)
+        evidence_papers = _merge_papers(
+            selected_seed_papers,
+            new_evidence_papers,
+            limit=task.search.target_fulltexts,
+        )
         cards, extraction_log = await extract_evidence_cards(
             task,
             evidence_papers,
@@ -188,6 +210,32 @@ def _select_evidence_papers(
     fulltext_papers = [paper for paper in papers if paper.record_id in fulltext_ids]
     other_papers = [paper for paper in papers if paper.record_id not in fulltext_ids]
     return [*fulltext_papers, *other_papers][:target]
+
+
+def _select_seed_papers(
+    papers: list[PaperRecord], cards: list[Any], target: int
+) -> list[PaperRecord]:
+    card_ids = {card.record_id for card in cards}
+    return [paper for paper in papers if paper.record_id in card_ids][:target]
+
+
+def _merge_papers(
+    preferred: list[PaperRecord],
+    remaining: list[PaperRecord],
+    *,
+    limit: int | None = None,
+) -> list[PaperRecord]:
+    merged: list[PaperRecord] = []
+    seen: set[str] = set()
+    for paper in [*preferred, *remaining]:
+        key = paper.canonical_key()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(paper)
+        if limit is not None and len(merged) >= limit:
+            break
+    return merged
 
 
 def _write_provenance(

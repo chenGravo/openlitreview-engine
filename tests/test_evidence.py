@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 
-from openlitreview.evidence import EvidenceExtractionError, extract_evidence_cards
+from openlitreview.evidence import (
+    EvidenceExtractionError,
+    extract_evidence_cards,
+    load_evidence_seed,
+)
 from openlitreview.schemas import EvidenceCard, PaperRecord, TaskSpec
 
 
@@ -42,7 +46,7 @@ async def test_evidence_extraction_stops_after_three_consecutive_failures(tmp_pa
         await extract_evidence_cards(task, papers, [], client, tmp_path)
 
     assert client.calls == 3
-    assert client.model_aliases == ["deepseek-v4-pro"] * 3
+    assert client.model_aliases == ["deepseek-v4-flash"] * 3
     assert (tmp_path / "evidence" / "extraction_log.json").is_file()
 
 
@@ -82,3 +86,62 @@ async def test_evidence_seed_skips_already_processed_paper(tmp_path) -> None:
         )
 
     assert client.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_orphan_seed_cards_are_filtered_before_outputs(tmp_path) -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={"enabled": True},
+        search={"target_fulltexts": 10},
+    )
+    papers = [
+        PaperRecord(record_id=f"p{index}", title=f"Paper {index}", abstract="A" * 500)
+        for index in range(4)
+    ]
+    orphan = EvidenceCard(
+        evidence_id="orphan_e1",
+        record_id="not-in-current-papers",
+        claim="Orphan claim",
+        evidence_type="abstract",
+        result="Orphan result",
+    )
+
+    with pytest.raises(EvidenceExtractionError, match="three consecutive"):
+        await extract_evidence_cards(
+            task,
+            papers,
+            [],
+            FailingClient(),
+            tmp_path,
+            initial_cards=[orphan],
+            initial_log=[{"record_id": orphan.record_id, "status": "ok"}],
+        )
+
+    assert "not-in-current-papers" not in (
+        tmp_path / "evidence" / "evidence_cards.json"
+    ).read_text(encoding="utf-8")
+
+
+def test_evidence_seed_loads_paper_metadata(tmp_path) -> None:
+    seed_path = tmp_path / "seed.json"
+    seed_path.write_text(
+        """{
+  "cards": [
+    {"evidence_id":"e1","record_id":"p1","claim":"c",
+     "evidence_type":"abstract","result":"r"}
+  ],
+  "log": [{"record_id":"p1","status":"ok"}],
+  "papers": [{"record_id":"p1","title":"Paper one","doi":"10.1/test"}]
+}
+""",
+        encoding="utf-8",
+    )
+
+    cards, log, papers = load_evidence_seed(tmp_path / "task.json", "seed.json")
+
+    assert cards[0].record_id == "p1"
+    assert log[0]["status"] == "ok"
+    assert papers[0].doi == "10.1/test"

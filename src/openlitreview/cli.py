@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument(
         "--models",
         nargs="+",
-        default=["deepseek-v4-pro", "kimi-k2.6", "doubao-seed-2.1-pro"],
+        default=["deepseek-v4-flash", "kimi-k2.6"],
     )
     benchmark.add_argument(
         "--confirmed",

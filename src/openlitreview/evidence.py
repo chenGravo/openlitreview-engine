@@ -31,8 +31,17 @@ async def extract_evidence_cards(
         for result in fulltexts
         if result.status == "extracted" and result.text_path
     }
-    cards = list(initial_cards or [])
-    log = list(initial_log or [])
+    allowed_record_ids = {
+        paper.record_id for paper in papers[: task.search.target_fulltexts]
+    }
+    cards = [
+        card for card in (initial_cards or []) if card.record_id in allowed_record_ids
+    ]
+    log = [
+        item
+        for item in (initial_log or [])
+        if not item.get("record_id") or item.get("record_id") in allowed_record_ids
+    ]
     processed_record_ids = {card.record_id for card in cards}
     consecutive_failures = 0
     for paper in papers[: task.search.target_fulltexts]:
@@ -98,9 +107,9 @@ async def extract_evidence_cards(
 
 def load_evidence_seed(
     task_path: str | Path, relative_path: str | None
-) -> tuple[list[EvidenceCard], list[dict[str, Any]]]:
+) -> tuple[list[EvidenceCard], list[dict[str, Any]], list[PaperRecord]]:
     if not relative_path:
-        return [], []
+        return [], [], []
     seed_path = safe_resolve(Path(task_path).parent, relative_path)
     if not seed_path.is_file() or seed_path.is_symlink():
         raise FileNotFoundError(f"Evidence seed file not found: {seed_path.name}")
@@ -109,11 +118,13 @@ def load_evidence_seed(
         raise ValueError("Evidence seed must contain a JSON object")
     raw_cards = payload.get("cards") or []
     raw_log = payload.get("log") or []
-    if not isinstance(raw_cards, list) or not isinstance(raw_log, list):
-        raise ValueError("Evidence seed cards and log must be arrays")
+    raw_papers = payload.get("papers") or []
+    if not all(isinstance(value, list) for value in (raw_cards, raw_log, raw_papers)):
+        raise ValueError("Evidence seed cards, log, and papers must be arrays")
     cards = [EvidenceCard.model_validate(card) for card in raw_cards]
     log = [dict(item) for item in raw_log if isinstance(item, dict)]
-    return cards, log
+    papers = [PaperRecord.model_validate(paper) for paper in raw_papers]
+    return cards, log, papers
 
 
 def _cards_from_payload(

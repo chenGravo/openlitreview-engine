@@ -173,12 +173,32 @@ def test_independent_reviewer_must_use_a_different_model() -> None:
                     "enabled": True,
                     "primary_model": "deepseek-v4-pro",
                     "reviewer_model": "deepseek-v4-pro",
+                    "allow_same_model_quality_checks": False,
                 },
             }
         )
 
 
-def test_default_model_route_uses_blind_benchmark_selection() -> None:
+def test_same_model_quality_checks_require_explicit_opt_in() -> None:
+    task = TaskSpec.model_validate(
+        {
+            "title": "Valid title",
+            "research_question": "A sufficiently long question?",
+            "keywords": ["test"],
+            "models": {
+                "enabled": True,
+                "cheap_model": "deepseek-v4-flash",
+                "primary_model": "kimi-k2.6",
+                "perspective_model": "kimi-k2.6",
+                "reviewer_model": "kimi-k2.6",
+                "allow_same_model_quality_checks": True,
+            },
+        }
+    )
+    assert task.models.primary_model == task.models.reviewer_model
+
+
+def test_default_model_route_uses_deepseek_flash_and_kimi() -> None:
     task = TaskSpec.model_validate(
         {
             "title": "Valid title",
@@ -186,6 +206,8 @@ def test_default_model_route_uses_blind_benchmark_selection() -> None:
             "keywords": ["test"],
         }
     )
-    assert task.models.primary_model == "deepseek-v4-pro"
+    assert task.models.cheap_model == "deepseek-v4-flash"
+    assert task.models.primary_model == "kimi-k2.6"
     assert task.models.perspective_model == "kimi-k2.6"
-    assert task.models.reviewer_model == "doubao-seed-2.1-pro"
+    assert task.models.reviewer_model == "kimi-k2.6"
+    assert task.models.allow_same_model_quality_checks is True

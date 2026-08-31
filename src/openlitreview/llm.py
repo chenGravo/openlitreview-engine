@@ -39,6 +39,12 @@ PROVIDERS: dict[str, ProviderConfig] = {
         fallback_api_key_envs=("DEEPSEEK_API_KEY",),
         fallback_model="deepseek-v4-pro",
     ),
+    "deepseek_official": ProviderConfig(
+        base_url="https://api.deepseek.com",
+        api_style="chat_completions",
+        api_key_envs=("DEEPSEEK_API_KEY",),
+        thinking_mode="disabled",
+    ),
     "kimi": ProviderConfig(
         base_url="https://api.moonshot.cn/v1",
         api_style="chat_completions",
@@ -76,7 +82,11 @@ class LLMClient:
         temperature: float = 0.2,
     ) -> dict[str, Any]:
         price = get_price(model_alias)
-        provider = PROVIDERS[price.provider]
+        provider = (
+            PROVIDERS["deepseek_official"]
+            if model_alias == "deepseek-v4-flash"
+            else PROVIDERS[price.provider]
+        )
         api_key = _first_environment_value(provider.api_key_envs)
         if not api_key:
             raise ModelResponseError(

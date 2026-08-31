@@ -6,7 +6,7 @@ from openlitreview.cli import main
 from openlitreview.config import load_task
 
 
-def test_quick_task_creates_valid_three_model_task(tmp_path) -> None:
+def test_quick_task_creates_valid_two_model_task(tmp_path) -> None:
     output = tmp_path / "quick-task.json"
 
     result = main(
@@ -40,9 +40,10 @@ def test_quick_task_creates_valid_three_model_task(tmp_path) -> None:
     ]
     assert task.output.target_chinese_characters == 6000
     assert task.models.enabled is True
-    assert task.models.primary_model == "deepseek-v4-pro"
+    assert task.models.cheap_model == "deepseek-v4-flash"
+    assert task.models.primary_model == "kimi-k2.6"
     assert task.models.perspective_model == "kimi-k2.6"
-    assert task.models.reviewer_model == "doubao-seed-2.1-pro"
+    assert task.models.reviewer_model == "kimi-k2.6"
     assert json.loads(output.read_text(encoding="utf-8"))["languages"] == ["en"]
 
 

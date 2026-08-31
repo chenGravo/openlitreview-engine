@@ -68,6 +68,14 @@ def test_deepseek_uses_ark_route_and_configured_model() -> None:
     assert body["thinking"] == {"type": "disabled"}
 
 
+def test_deepseek_flash_official_route_uses_official_secret() -> None:
+    provider = PROVIDERS["deepseek_official"]
+    assert provider.base_url == "https://api.deepseek.com"
+    assert provider.api_key_envs == ("DEEPSEEK_API_KEY",)
+    assert provider.require_configured_model is False
+    assert provider.thinking_mode == "disabled"
+
+
 def test_http_error_detail_excludes_message_and_contact_data() -> None:
     response = httpx.Response(
         402,

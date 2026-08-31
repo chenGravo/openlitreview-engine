@@ -53,10 +53,11 @@ budget:
 
 models:
   enabled: true
-  cheap_model: deepseek-v4-pro
-  primary_model: deepseek-v4-pro
+  cheap_model: deepseek-v4-flash
+  primary_model: kimi-k2.6
   perspective_model: kimi-k2.6
-  reviewer_model: doubao-seed-2.1-pro
+  reviewer_model: kimi-k2.6
+  allow_same_model_quality_checks: true
   allow_second_model_review: true
   max_revision_rounds: 1
   temperature: 0.2

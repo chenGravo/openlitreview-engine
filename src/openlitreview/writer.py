@@ -55,7 +55,7 @@ async def generate_review(
                 {
                     "task": _task_payload(task),
                     "evidence": evidence_packet,
-                    "independent_perspective_audit": perspective_payload,
+                    "perspective_audit": perspective_payload,
                 },
                 ensure_ascii=False,
             )
@@ -78,7 +78,7 @@ async def generate_review(
                     "task": _task_payload(task),
                     "approved_outline": outline_payload,
                     "evidence": evidence_packet,
-                    "independent_perspective_audit": perspective_payload,
+                    "perspective_audit": perspective_payload,
                 },
                 ensure_ascii=False,
             )
@@ -99,11 +99,16 @@ async def generate_review(
 
     reviewer_payload = None
     if task.models.allow_second_model_review:
+        review_prefix = (
+            "same_model_review"
+            if task.models.primary_model == task.models.reviewer_model
+            else "independent_model_review"
+        )
         for review_round in range(task.models.max_revision_rounds + 1):
             reviewer_payload = await _review_draft(
                 task, evidence_packet, markdown, client
             )
-            review_path = output / "audit" / f"independent_model_review_{review_round + 1}.json"
+            review_path = output / "audit" / f"{review_prefix}_{review_round + 1}.json"
             review_path.write_text(
                 json.dumps(reviewer_payload, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
@@ -146,7 +151,7 @@ async def generate_review(
             )
             (draft_dir / "review.md").write_text(markdown, encoding="utf-8")
         if reviewer_payload is not None:
-            (output / "audit" / "independent_model_review.json").write_text(
+            (output / "audit" / f"{review_prefix}.json").write_text(
                 json.dumps(reviewer_payload, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )

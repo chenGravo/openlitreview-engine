@@ -41,8 +41,14 @@ def test_unknown_model_is_blocked(tmp_path) -> None:
 
 def test_kimi_prices_use_conservative_cny_planning_values() -> None:
     price = get_price("kimi-k2.6")
-    assert price.input_cny_per_million == Decimal("8")
-    assert price.output_cny_per_million == Decimal("32")
+    assert price.input_cny_per_million == Decimal("6.5")
+    assert price.output_cny_per_million == Decimal("27")
+
+
+def test_deepseek_flash_uses_peak_price_for_safe_planning() -> None:
+    price = get_price("deepseek-v4-flash")
+    assert price.input_cny_per_million == Decimal("3")
+    assert price.output_cny_per_million == Decimal("9")
 
 
 def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
@@ -85,7 +91,7 @@ def test_each_model_has_an_independent_ten_cny_task_cap(tmp_path) -> None:
         input_tokens=500_000,
         max_output_tokens=0,
     )
-    assert estimate == Decimal("4.4000")
+    assert estimate == Decimal("3.5750")
 
 
 def test_switching_alias_cannot_bypass_provider_cap(tmp_path) -> None:
@@ -100,7 +106,7 @@ def test_switching_alias_cannot_bypass_provider_cap(tmp_path) -> None:
     ledger.authorize_call(
         "benchmark",
         "deepseek-v4-pro",
-        input_tokens=50_000,
+        input_tokens=70_000,
         max_output_tokens=0,
     )
     with pytest.raises(BudgetExceeded, match="Per-model/provider task cap"):

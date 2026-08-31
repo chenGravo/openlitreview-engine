@@ -147,12 +147,17 @@ def audit_run(
             }
         )
     reviewer_verdict = str((reviewer or {}).get("verdict") or "not_run")
+    reviewer_mode = (
+        "same_model"
+        if task.models.primary_model == task.models.reviewer_model
+        else "independent_model"
+    )
     if task.models.enabled and task.models.allow_second_model_review and reviewer_verdict != "pass":
         findings.append(
             {
                 "severity": "high",
-                "code": "independent_review_not_passed",
-                "message": f"Independent model review verdict: {reviewer_verdict}",
+                "code": "model_review_not_passed",
+                "message": f"{reviewer_mode} review verdict: {reviewer_verdict}",
             }
         )
     high_reviewer_issues = [
@@ -164,8 +169,8 @@ def audit_run(
         findings.append(
             {
                 "severity": "high",
-                "code": "independent_review_high_severity_issues",
-                "message": f"Independent review reported {len(high_reviewer_issues)} high issues.",
+                "code": "model_review_high_severity_issues",
+                "message": f"Model review reported {len(high_reviewer_issues)} high issues.",
             }
         )
     status = "pass" if not any(item["severity"] == "high" for item in findings) else "blocked"
@@ -187,7 +192,8 @@ def audit_run(
         "citations_used": len(used_keys),
         "unknown_citations": sorted(unknown_keys),
         "uncited_long_paragraphs": uncited_paragraphs,
-        "independent_review_verdict": reviewer_verdict,
+        "model_review_mode": reviewer_mode,
+        "model_review_verdict": reviewer_verdict,
         "findings": findings,
         "human_review_required": True,
         "review_type_claim": "narrative review; not a systematic review",
@@ -223,7 +229,8 @@ def _report_markdown(report: dict[str, Any]) -> str:
 - 进入证据矩阵的文献：{report['evidence_papers']}
 - 全文核验文献：{report['fulltext_verified_papers']}
 - 正文引用文献：{report['citations_used']}
-- 独立复核结论：{report['independent_review_verdict']}
+- 模型复核方式：{report['model_review_mode']}
+- 模型复核结论：{report['model_review_verdict']}
 
 ## 发现
 

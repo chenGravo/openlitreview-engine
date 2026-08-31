@@ -104,11 +104,12 @@ class ModelSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    cheap_model: str = "deepseek-v4-pro"
-    primary_model: str = "deepseek-v4-pro"
+    cheap_model: str = "deepseek-v4-flash"
+    primary_model: str = "kimi-k2.6"
     perspective_model: str = "kimi-k2.6"
-    reviewer_model: str = "doubao-seed-2.1-pro"
+    reviewer_model: str = "kimi-k2.6"
     allow_second_model_review: bool = True
+    allow_same_model_quality_checks: bool = True
     max_revision_rounds: int = Field(default=1, ge=0, le=2)
     temperature: float = Field(default=0.2, ge=0, le=1)
 
@@ -129,9 +130,14 @@ class ModelSettings(BaseModel):
             self.enabled
             and self.allow_second_model_review
             and self.primary_model == self.reviewer_model
+            and not self.allow_same_model_quality_checks
         ):
             raise ValueError("Independent reviewer_model must differ from primary_model")
-        if self.enabled and self.perspective_model == self.primary_model:
+        if (
+            self.enabled
+            and self.perspective_model == self.primary_model
+            and not self.allow_same_model_quality_checks
+        ):
             raise ValueError(
                 "Independent perspective_model must differ from primary_model"
             )

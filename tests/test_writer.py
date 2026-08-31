@@ -39,7 +39,15 @@ async def test_failed_independent_review_triggers_revision_and_rereview(tmp_path
         title="测试文献综述",
         research_question="测试研究问题是什么？",
         keywords=["test"],
-        models={"enabled": True, "max_revision_rounds": 1},
+        models={
+            "enabled": True,
+            "cheap_model": "deepseek-v4-pro",
+            "primary_model": "deepseek-v4-pro",
+            "perspective_model": "kimi-k2.6",
+            "reviewer_model": "doubao-seed-2.1-pro",
+            "allow_same_model_quality_checks": False,
+            "max_revision_rounds": 1,
+        },
     )
     paper = PaperRecord(record_id="p1", title="Test paper", doi="10.1/test")
     card = EvidenceCard(
@@ -85,3 +93,44 @@ async def test_failed_independent_review_triggers_revision_and_rereview(tmp_path
     assert reviewer == {"verdict": "pass", "issues": []}
     assert (tmp_path / "audit" / "prewriting_perspective_audit.json").is_file()
     assert (tmp_path / "audit" / "independent_model_review_2.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_explicit_same_model_review_is_labeled_as_same_model(tmp_path) -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={
+            "enabled": True,
+            "cheap_model": "deepseek-v4-flash",
+            "primary_model": "kimi-k2.6",
+            "perspective_model": "kimi-k2.6",
+            "reviewer_model": "kimi-k2.6",
+            "allow_same_model_quality_checks": True,
+            "max_revision_rounds": 0,
+        },
+    )
+    paper = PaperRecord(record_id="p1", title="Test paper", doi="10.1/test")
+    card = EvidenceCard(
+        evidence_id="e1",
+        record_id="p1",
+        claim="测试主张",
+        evidence_type="abstract",
+        result="测试结果",
+    )
+    client = FakeClient(
+        [
+            {"evidence_clusters": [], "contradictions": []},
+            {"central_argument": "测试", "sections": []},
+            _draft("正文。[@ref_50c81ef030]"),
+            {"verdict": "pass", "issues": []},
+        ]
+    )
+    (tmp_path / "audit").mkdir()
+
+    await generate_review(task, [paper], [card], client, tmp_path)
+
+    assert client.model_aliases == ["kimi-k2.6"] * 4
+    assert (tmp_path / "audit" / "same_model_review.json").is_file()
+    assert not (tmp_path / "audit" / "independent_model_review.json").exists()
