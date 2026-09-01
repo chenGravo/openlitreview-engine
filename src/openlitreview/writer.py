@@ -13,6 +13,9 @@ from .storage import citation_key
 CITATION_CLUSTER_RE = re.compile(
     r"\[((?:@[A-Za-z0-9_.:-]+)(?:;\s*@[A-Za-z0-9_.:-]+)+)\]"
 )
+ADJACENT_DUPLICATE_CITATION_RE = re.compile(
+    r"\[@(?P<key>[A-Za-z0-9_.:-]+)\](?:\s*\[@(?P=key)\])+"
+)
 
 OUTLINE_SYSTEM = """You design a Chinese narrative literature-review outline from an audited
 evidence set. Cover foundational concepts, major evidence clusters, disagreements, limitations,
@@ -207,14 +210,7 @@ async def _generate_sectioned_draft(
     ]
     introduction_index = 0 if outline_sections else None
     conclusion_index = len(outline_sections) - 1 if len(outline_sections) >= 2 else None
-    limitations_index = next(
-        (
-            index
-            for index, item in enumerate(outline_sections)
-            if "局限" in str(item.get("heading") or "")
-        ),
-        None,
-    )
+    limitations_index = _limitations_section_index(outline_sections)
     excluded = {
         index
         for index in (introduction_index, conclusion_index, limitations_index)
@@ -367,7 +363,7 @@ async def _generate_sectioned_draft(
             for item in structural.get("sections") or []
             if isinstance(item, dict)
         ]
-    return {
+    assembled: dict[str, Any] = {
         "title": str(structural.get("title") or task.title).strip(),
         "abstract": str(structural.get("abstract") or "").strip(),
         "keywords": _string_list(structural.get("keywords")),
@@ -376,6 +372,40 @@ async def _generate_sectioned_draft(
         "conclusion": str(structural.get("conclusion") or "").strip(),
         "limitations": str(structural.get("limitations") or "").strip(),
     }
+    if outline_sections:
+        assembled["introduction_heading"] = _role_heading(
+            outline_sections, introduction_index, "引言"
+        )
+        assembled["limitations_heading"] = _role_heading(
+            outline_sections, limitations_index, "局限"
+        )
+        assembled["conclusion_heading"] = _role_heading(
+            outline_sections, conclusion_index, "结论"
+        )
+    return assembled
+
+
+def _limitations_section_index(outline_sections: list[dict[str, Any]]) -> int | None:
+    explicit: list[int] = []
+    broad: list[int] = []
+    for index, item in enumerate(outline_sections):
+        heading = str(item.get("heading") or "").strip()
+        if "局限" not in heading:
+            continue
+        broad.append(index)
+        heading_without_number = re.sub(r"^\s*\d+[.、：:\s]*", "", heading)
+        if heading_without_number.startswith(("局限", "研究局限", "综述局限")):
+            explicit.append(index)
+    candidates = explicit or broad
+    return candidates[-1] if candidates else None
+
+
+def _role_heading(
+    outline_sections: list[dict[str, Any]], index: int | None, fallback: str
+) -> str:
+    if index is None or not 0 <= index < len(outline_sections):
+        return fallback
+    return str(outline_sections[index].get("heading") or fallback).strip()
 
 
 def _outline_evidence_ids(role: dict[str, Any]) -> list[str]:
@@ -415,7 +445,15 @@ def _normalize_part_citations(value: Any, aliases: dict[str, str]) -> Any:
             f"@{citation}",
             normalized,
         )
-    return CITATION_CLUSTER_RE.sub(_deduplicate_citation_cluster, normalized)
+        normalized = re.sub(
+            rf"(?<![@A-Za-z0-9_.:-]){re.escape(citation)}(?![A-Za-z0-9_.:-])",
+            "该研究",
+            normalized,
+        )
+    normalized = CITATION_CLUSTER_RE.sub(_deduplicate_citation_cluster, normalized)
+    return ADJACENT_DUPLICATE_CITATION_RE.sub(
+        lambda match: f"[@{match.group('key')}]", normalized
+    )
 
 
 def _deduplicate_citation_cluster(match: re.Match[str]) -> str:
@@ -794,6 +832,9 @@ def render_review_markdown(payload: dict[str, Any]) -> str:
     sections = payload.get("sections") or []
     conclusion = str(payload.get("conclusion") or "").strip()
     limitations = str(payload.get("limitations") or "").strip()
+    introduction_heading = str(payload.get("introduction_heading") or "引言").strip()
+    limitations_heading = str(payload.get("limitations_heading") or "局限").strip()
+    conclusion_heading = str(payload.get("conclusion_heading") or "结论").strip()
     parts = [
         "---",
         f'title: "{title.replace(chr(34), chr(39))}"',
@@ -808,19 +849,38 @@ def render_review_markdown(payload: dict[str, Any]) -> str:
         "",
         f"**关键词：** {'；'.join(keywords)}",
         "",
-        "## 引言",
+        f"## {introduction_heading}",
         "",
         introduction,
     ]
+    limitations_inserted = False
+    limitations_order = _heading_number(limitations_heading)
     for section in sections:
         if not isinstance(section, dict):
             continue
         heading = str(section.get("heading") or "").strip()
         body = str(section.get("body") or "").strip()
+        section_order = _heading_number(heading)
+        if (
+            limitations
+            and not limitations_inserted
+            and limitations_order is not None
+            and section_order is not None
+            and section_order > limitations_order
+        ):
+            parts.extend(["", f"## {limitations_heading}", "", limitations])
+            limitations_inserted = True
         if heading and body:
             parts.extend(["", f"## {heading}", "", body])
-    parts.extend(["", "## 结论", "", conclusion, "", "## 局限", "", limitations, ""])
+    if limitations and not limitations_inserted:
+        parts.extend(["", f"## {limitations_heading}", "", limitations])
+    parts.extend(["", f"## {conclusion_heading}", "", conclusion, ""])
     return "\n".join(parts)
+
+
+def _heading_number(heading: str) -> int | None:
+    match = re.match(r"^\s*(\d+)\b", heading)
+    return int(match.group(1)) if match else None
 
 
 def _evidence_packet(papers: list[PaperRecord], cards: list[EvidenceCard]) -> list[dict[str, Any]]:

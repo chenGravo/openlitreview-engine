@@ -7,11 +7,13 @@ import pytest
 from openlitreview.schemas import EvidenceCard, PaperRecord, TaskSpec
 from openlitreview.writer import (
     _citation_aliases_from_digest,
+    _limitations_section_index,
     _normalize_part_citations,
     _paper_batches,
     _review_payload_for_part,
     _sanitize_batch_digest,
     generate_review,
+    render_review_markdown,
 )
 
 
@@ -361,14 +363,19 @@ def test_evidence_card_citations_are_mapped_to_verified_paper_keys() -> None:
     payload = {
         "introduction": "引言。[@ref_50c81ef030_e1]",
         "sections": [
-            {"body": "正文。[@ref_50c81ef030_e99; @ref_50c81ef030_e1]"}
+            {
+                "body": (
+                    "正文。[@ref_50c81ef030_e99; @ref_50c81ef030_e1]"
+                    "[@ref_50c81ef030_e1]；ref_50c81ef030仅作内部标识。"
+                )
+            }
         ],
     }
 
     normalized = _normalize_part_citations(payload, _citation_aliases_from_digest(digest))
 
     assert normalized["introduction"] == "引言。[@ref_50c81ef030]"
-    assert normalized["sections"][0]["body"] == "正文。[@ref_50c81ef030]"
+    assert normalized["sections"][0]["body"] == "正文。[@ref_50c81ef030]；该研究仅作内部标识。"
 
 
 def test_review_issues_are_routed_only_to_named_draft_parts() -> None:
@@ -390,3 +397,41 @@ def test_review_issues_are_routed_only_to_named_draft_parts() -> None:
     structural = _review_payload_for_part(review, structural=True)
     assert structural is not None
     assert structural["issues"] == [review["issues"][1]]
+
+
+def test_structural_limitations_prefers_dedicated_later_section() -> None:
+    outline = [
+        {"heading": "7 损伤风险筛查的个体判别局限性"},
+        {"heading": "11 局限性与证据缺口"},
+        {"heading": "12 未来研究"},
+    ]
+
+    assert _limitations_section_index(outline) == 1
+
+
+def test_render_places_numbered_limitations_before_later_sections_and_conclusion() -> None:
+    markdown = render_review_markdown(
+        {
+            "title": "测试",
+            "introduction_heading": "1 引言",
+            "introduction": "引言正文",
+            "sections": [
+                {"heading": "10 结果", "body": "结果正文"},
+                {"heading": "12 展望", "body": "展望正文"},
+            ],
+            "limitations_heading": "11 局限",
+            "limitations": "局限正文",
+            "conclusion_heading": "13 结论",
+            "conclusion": "结论正文",
+        }
+    )
+
+    headings = [line for line in markdown.splitlines() if line.startswith("## ")]
+    assert headings == [
+        "## 摘要",
+        "## 1 引言",
+        "## 10 结果",
+        "## 11 局限",
+        "## 12 展望",
+        "## 13 结论",
+    ]
