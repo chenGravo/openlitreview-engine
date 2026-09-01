@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,11 +10,15 @@ from .prompts import WRITING_SYSTEM
 from .schemas import EvidenceCard, PaperRecord, TaskSpec
 from .storage import citation_key
 
+CITATION_CLUSTER_RE = re.compile(
+    r"\[((?:@[A-Za-z0-9_.:-]+)(?:;\s*@[A-Za-z0-9_.:-]+)+)\]"
+)
+
 OUTLINE_SYSTEM = """You design a Chinese narrative literature-review outline from an audited
 evidence set. Cover foundational concepts, major evidence clusters, disagreements, limitations,
 and future directions. Do not invent citations or facts. Return strict JSON only."""
 
-REVIEW_SYSTEM = """You are an independent academic evidence auditor. Compare the supplied
+REVIEW_SYSTEM = """You are an academic evidence auditor. Compare the supplied
 Chinese draft against the evidence cards. Identify unsupported, overstated, causal, numerical,
 medical-safety, contradictory, or missing-counterevidence claims. Do not rewrite for style and do
 not invent sources. Return strict JSON only."""
@@ -25,7 +30,7 @@ boundaries, safety uncertainty, missing perspectives, and limitations that the o
 must preserve. Do not invent sources, facts, identifiers, or certainty. Return strict JSON only."""
 
 REVISION_SYSTEM = """You revise a Chinese narrative academic literature review after an
-independent evidence audit. Correct every reported issue using only the supplied evidence cards.
+evidence audit. Correct every reported issue using only the supplied evidence cards.
 Preserve supported nuance, disagreements, null results, limitations, and Pandoc citation keys.
 Never invent facts or citations. Return the complete revised review as strict JSON only."""
 
@@ -40,13 +45,16 @@ SECTION_WRITING_SYSTEM = (
     WRITING_SYSTEM
     + """
 Write only the requested review part. Respect its target length and supplied outline role.
+For citations, use only values from the `citation_key` fields, formatted as Pandoc citations.
+Never cite an `evidence_id`; evidence IDs only identify supporting snippets.
 Do not add a reference list or discuss any other section. Return strict JSON only."""
 )
 
 SECTION_REVISION_SYSTEM = """You revise only one requested part of a Chinese narrative academic
 literature review after an evidence audit. Correct relevant issues using only the supplied
 evidence digest. Preserve supported nuance, disagreements, null results, limitations, and Pandoc
-citation keys. Do not invent facts or citations, and do not discuss the generation process.
+citation keys. For citations, use only values from the `citation_key` fields; never cite an
+`evidence_id`. Do not invent facts or citations, and do not discuss the generation process.
 Return strict JSON only."""
 
 
@@ -214,6 +222,7 @@ async def _generate_sectioned_draft(
     total_target = task.output.target_chinese_characters
     structural_target = max(1_500, int(total_target * 0.30))
     section_target = max(400, int(total_target * 0.65 / max(len(main_indices), 1)))
+    citation_aliases = _citation_aliases_from_digest(evidence_digest)
 
     all_parts = writing_checkpoints.setdefault("draft_parts", {})
     if not isinstance(all_parts, dict):
@@ -260,6 +269,11 @@ async def _generate_sectioned_draft(
             max_output_tokens=6_000,
             temperature=0.1 if reviewer_payload is not None else task.models.temperature,
         )
+        structural = _normalize_part_citations(structural, citation_aliases)
+        parts["structural"] = structural
+        _write_writing_checkpoints(output, writing_checkpoints)
+    else:
+        structural = _normalize_part_citations(structural, citation_aliases)
         parts["structural"] = structural
         _write_writing_checkpoints(output, writing_checkpoints)
 
@@ -304,6 +318,11 @@ async def _generate_sectioned_draft(
                 max_output_tokens=3_000,
                 temperature=0.1 if reviewer_payload is not None else task.models.temperature,
             )
+            section_payload = _normalize_part_citations(section_payload, citation_aliases)
+            section_parts[part_key] = section_payload
+            _write_writing_checkpoints(output, writing_checkpoints)
+        else:
+            section_payload = _normalize_part_citations(section_payload, citation_aliases)
             section_parts[part_key] = section_payload
             _write_writing_checkpoints(output, writing_checkpoints)
         body = str(section_payload.get("body") or "").strip()
@@ -330,6 +349,50 @@ async def _generate_sectioned_draft(
 
 def _outline_evidence_ids(role: dict[str, Any]) -> list[str]:
     return _string_list(role.get("evidence_ids"))
+
+
+def _citation_aliases_from_digest(
+    evidence_digest: list[dict[str, Any]],
+) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for batch in evidence_digest:
+        for summary in batch.get("source_summaries") or []:
+            if not isinstance(summary, dict):
+                continue
+            citation = str(summary.get("citation_key") or "").strip()
+            if not citation:
+                continue
+            for evidence_id in _string_list(summary.get("evidence_ids")):
+                aliases[evidence_id] = citation
+    return aliases
+
+
+def _normalize_part_citations(value: Any, aliases: dict[str, str]) -> Any:
+    """Replace evidence-card citations with their verified paper citation keys."""
+    if isinstance(value, dict):
+        return {key: _normalize_part_citations(item, aliases) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_part_citations(item, aliases) for item in value]
+    if not isinstance(value, str):
+        return value
+    normalized = value
+    for evidence_id in sorted(aliases, key=len, reverse=True):
+        normalized = normalized.replace(f"@{evidence_id}", f"@{aliases[evidence_id]}")
+    for citation in sorted(set(aliases.values()), key=len, reverse=True):
+        normalized = re.sub(
+            rf"@{re.escape(citation)}_e\d+\b",
+            f"@{citation}",
+            normalized,
+        )
+    return CITATION_CLUSTER_RE.sub(_deduplicate_citation_cluster, normalized)
+
+
+def _deduplicate_citation_cluster(match: re.Match[str]) -> str:
+    citations: list[str] = []
+    for citation in (item.strip() for item in match.group(1).split(";")):
+        if citation not in citations:
+            citations.append(citation)
+    return "[" + "; ".join(citations) + "]"
 
 
 def _filter_evidence_digest(

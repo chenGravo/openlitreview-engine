@@ -5,7 +5,13 @@ from typing import Any
 import pytest
 
 from openlitreview.schemas import EvidenceCard, PaperRecord, TaskSpec
-from openlitreview.writer import _paper_batches, _sanitize_batch_digest, generate_review
+from openlitreview.writer import (
+    _citation_aliases_from_digest,
+    _normalize_part_citations,
+    _paper_batches,
+    _sanitize_batch_digest,
+    generate_review,
+)
 
 
 class FakeClient:
@@ -338,3 +344,27 @@ def test_digest_batches_preserve_every_source_and_drop_unknown_ids() -> None:
     assert len(digest["source_summaries"]) == 8
     assert digest["source_summaries"][0]["evidence_ids"] == ["e0"]
     assert digest["cross_source_observations"] == [{"observation": "valid", "evidence_ids": ["e0"]}]
+
+
+def test_evidence_card_citations_are_mapped_to_verified_paper_keys() -> None:
+    digest = [
+        {
+            "source_summaries": [
+                {
+                    "citation_key": "ref_50c81ef030",
+                    "evidence_ids": ["ref_50c81ef030_e1", "ref_50c81ef030_e10"],
+                }
+            ]
+        }
+    ]
+    payload = {
+        "introduction": "引言。[@ref_50c81ef030_e1]",
+        "sections": [
+            {"body": "正文。[@ref_50c81ef030_e99; @ref_50c81ef030_e1]"}
+        ],
+    }
+
+    normalized = _normalize_part_citations(payload, _citation_aliases_from_digest(digest))
+
+    assert normalized["introduction"] == "引言。[@ref_50c81ef030]"
+    assert normalized["sections"][0]["body"] == "正文。[@ref_50c81ef030]"
