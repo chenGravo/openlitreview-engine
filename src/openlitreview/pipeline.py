@@ -72,7 +72,7 @@ async def execute_pipeline(
                 "quality": quality,
             }
 
-        seed_cards, seed_log, seed_papers, seed_digest = load_evidence_seed(
+        seed_cards, seed_log, seed_papers, seed_digest, seed_writing = load_evidence_seed(
             task_path, task.evidence_seed_file
         )
         selected_seed_papers = _select_seed_papers(
@@ -152,6 +152,7 @@ async def execute_pipeline(
             client,
             output,
             initial_evidence_digest=seed_digest,
+            initial_writing_checkpoints=seed_writing,
         )
         quality = audit_run(task, search_run, cards, markdown, reviewer, output)
         render_report = None

@@ -45,6 +45,7 @@ async def generate_review(
     output: Path,
     *,
     initial_evidence_digest: list[dict[str, Any]] | None = None,
+    initial_writing_checkpoints: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
     raw_evidence_packet = _evidence_packet(papers, cards)
     evidence_digest = await _build_evidence_digest(
@@ -54,30 +55,60 @@ async def generate_review(
         output,
         initial_digest=initial_evidence_digest,
     )
-    perspective_payload = await _audit_perspectives(task, evidence_digest, client)
+    writing_checkpoints = initial_writing_checkpoints or {}
+    seeded_perspective = writing_checkpoints.get("perspective_audit")
+    perspective_payload = (
+        dict(seeded_perspective)
+        if isinstance(seeded_perspective, dict)
+        else await _audit_perspectives(task, evidence_digest, client)
+    )
     perspective_path = output / "audit" / "prewriting_perspective_audit.json"
     perspective_path.write_text(
         json.dumps(perspective_payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    outline_payload = await client.complete_json(
-        model_alias=task.models.primary_model,
-        system=OUTLINE_SYSTEM,
-        prompt=(
-            "Return schema: "
-            '{"central_argument":"","sections":[{"heading":"","purpose":"","evidence_ids":[]}],'
-            '"required_disagreements":[],"limitations_to_state":[]}\n'
-            + json.dumps(
-                {
-                    "task": _task_payload(task),
-                    "evidence_digest": evidence_digest,
-                    "perspective_audit": perspective_payload,
-                },
-                ensure_ascii=False,
-            )
-        ),
-        max_output_tokens=4_000,
-        temperature=0.1,
+    seeded_outline = writing_checkpoints.get("outline")
+    outline_payload = (
+        dict(seeded_outline)
+        if isinstance(seeded_outline, dict)
+        else await client.complete_json(
+            model_alias=task.models.primary_model,
+            system=OUTLINE_SYSTEM,
+            prompt=(
+                "Return schema: "
+                '{"central_argument":"","sections":[{"heading":"","purpose":"",'
+                '"evidence_ids":[]}],"required_disagreements":[],'
+                '"limitations_to_state":[]}\n'
+                + json.dumps(
+                    {
+                        "task": _task_payload(task),
+                        "evidence_digest": evidence_digest,
+                        "perspective_audit": perspective_payload,
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            max_output_tokens=4_000,
+            temperature=0.1,
+        )
+    )
+    draft_dir = output / "draft"
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    (draft_dir / "outline.json").write_text(
+        json.dumps(outline_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (output / "audit" / "writing_checkpoints.json").write_text(
+        json.dumps(
+            {
+                "perspective_audit": perspective_payload,
+                "outline": outline_payload,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     draft_payload = await client.complete_json(
         model_alias=task.models.primary_model,
@@ -103,11 +134,6 @@ async def generate_review(
         temperature=task.models.temperature,
     )
     markdown = render_review_markdown(draft_payload)
-    draft_dir = output / "draft"
-    draft_dir.mkdir(parents=True, exist_ok=True)
-    (draft_dir / "outline.json").write_text(
-        json.dumps(outline_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
     (draft_dir / "review.json").write_text(
         json.dumps(draft_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

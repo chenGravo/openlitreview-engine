@@ -89,9 +89,7 @@ class LLMClient:
         )
         api_key = _first_environment_value(provider.api_key_envs)
         if not api_key:
-            raise ModelResponseError(
-                f"Missing secret: {' or '.join(provider.api_key_envs)}"
-            )
+            raise ModelResponseError(f"Missing secret: {' or '.join(provider.api_key_envs)}")
         configured_model = _first_environment_value(provider.model_envs)
         if provider.require_configured_model and not configured_model:
             raise ModelResponseError(
@@ -118,8 +116,10 @@ class LLMClient:
             temperature=temperature,
         )
         try:
+            request_timeout = 600.0 if price.provider == "kimi" else 180.0
             async with httpx.AsyncClient(
-                timeout=httpx.Timeout(180.0, connect=20.0), follow_redirects=True
+                timeout=httpx.Timeout(request_timeout, connect=20.0),
+                follow_redirects=True,
             ) as client:
                 response = await client.post(
                     f"{base_url}/{endpoint}",
@@ -132,9 +132,7 @@ class LLMClient:
                     and provider.fallback_base_url
                     and provider.fallback_model
                 ):
-                    fallback_key = _first_environment_value(
-                        provider.fallback_api_key_envs
-                    )
+                    fallback_key = _first_environment_value(provider.fallback_api_key_envs)
                     if fallback_key:
                         fallback_body = {**body, "model": provider.fallback_model}
                         response = await client.post(

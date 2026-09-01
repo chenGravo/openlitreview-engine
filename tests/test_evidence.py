@@ -140,9 +140,10 @@ def test_evidence_seed_loads_paper_metadata(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    cards, log, papers, digest = load_evidence_seed(tmp_path / "task.json", "seed.json")
+    cards, log, papers, digest, writing = load_evidence_seed(tmp_path / "task.json", "seed.json")
 
     assert cards[0].record_id == "p1"
     assert log[0]["status"] == "ok"
     assert papers[0].doi == "10.1/test"
     assert digest == []
+    assert writing == {}

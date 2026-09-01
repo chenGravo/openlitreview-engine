@@ -191,8 +191,6 @@ async def test_seeded_digest_batches_skip_completed_model_calls(tmp_path) -> Non
     ]
     client = FakeClient(
         [
-            {"evidence_clusters": [], "contradictions": []},
-            {"central_argument": "测试", "sections": []},
             _draft("正文。[@ref_50c81ef030]"),
             {"verdict": "pass", "issues": []},
         ]
@@ -206,10 +204,18 @@ async def test_seeded_digest_batches_skip_completed_model_calls(tmp_path) -> Non
         client,
         tmp_path,
         initial_evidence_digest=digest,
+        initial_writing_checkpoints={
+            "perspective_audit": {
+                "evidence_clusters": [],
+                "contradictions": [],
+            },
+            "outline": {"central_argument": "测试", "sections": []},
+        },
     )
 
-    assert client.calls == 4
-    assert client.model_aliases == ["kimi-k2.6"] * 4
+    assert client.calls == 2
+    assert client.model_aliases == ["kimi-k2.6"] * 2
+    assert (tmp_path / "audit" / "writing_checkpoints.json").is_file()
 
 
 def test_digest_batches_preserve_every_source_and_drop_unknown_ids() -> None:

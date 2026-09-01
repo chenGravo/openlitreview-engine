@@ -108,9 +108,10 @@ def load_evidence_seed(
     list[dict[str, Any]],
     list[PaperRecord],
     list[dict[str, Any]],
+    dict[str, Any],
 ]:
     if not relative_path:
-        return [], [], [], []
+        return [], [], [], [], {}
     seed_path = safe_resolve(Path(task_path).parent, relative_path)
     if not seed_path.is_file() or seed_path.is_symlink():
         raise FileNotFoundError(f"Evidence seed file not found: {seed_path.name}")
@@ -121,13 +122,16 @@ def load_evidence_seed(
     raw_log = payload.get("log") or []
     raw_papers = payload.get("papers") or []
     raw_digest = payload.get("evidence_digest_batches") or []
+    raw_writing_checkpoints = payload.get("writing_checkpoints") or {}
     if not all(isinstance(value, list) for value in (raw_cards, raw_log, raw_papers, raw_digest)):
         raise ValueError("Evidence seed cards, log, papers, and digest must be arrays")
+    if not isinstance(raw_writing_checkpoints, dict):
+        raise ValueError("Evidence seed writing_checkpoints must be an object")
     cards = [EvidenceCard.model_validate(card) for card in raw_cards]
     log = [dict(item) for item in raw_log if isinstance(item, dict)]
     papers = [PaperRecord.model_validate(paper) for paper in raw_papers]
     digest = [dict(item) for item in raw_digest if isinstance(item, dict)]
-    return cards, log, papers, digest
+    return cards, log, papers, digest, dict(raw_writing_checkpoints)
 
 
 def _cards_from_payload(
