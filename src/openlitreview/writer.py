@@ -36,6 +36,19 @@ study-design strength, medical-safety uncertainty, and limitations. Use only sup
 IDs and citation keys. Do not infer missing results or invent facts, sources, identifiers, or
 certainty. Return strict JSON only."""
 
+SECTION_WRITING_SYSTEM = (
+    WRITING_SYSTEM
+    + """
+Write only the requested review part. Respect its target length and supplied outline role.
+Do not add a reference list or discuss any other section. Return strict JSON only."""
+)
+
+SECTION_REVISION_SYSTEM = """You revise only one requested part of a Chinese narrative academic
+literature review after an evidence audit. Correct relevant issues using only the supplied
+evidence digest. Preserve supported nuance, disagreements, null results, limitations, and Pandoc
+citation keys. Do not invent facts or citations, and do not discuss the generation process.
+Return strict JSON only."""
+
 
 async def generate_review(
     task: TaskSpec,
@@ -55,7 +68,7 @@ async def generate_review(
         output,
         initial_digest=initial_evidence_digest,
     )
-    writing_checkpoints = initial_writing_checkpoints or {}
+    writing_checkpoints = dict(initial_writing_checkpoints or {})
     seeded_perspective = writing_checkpoints.get("perspective_audit")
     perspective_payload = (
         dict(seeded_perspective)
@@ -98,40 +111,18 @@ async def generate_review(
         json.dumps(outline_payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    (output / "audit" / "writing_checkpoints.json").write_text(
-        json.dumps(
-            {
-                "perspective_audit": perspective_payload,
-                "outline": outline_payload,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    draft_payload = await client.complete_json(
-        model_alias=task.models.primary_model,
-        system=WRITING_SYSTEM,
-        prompt=(
-            "Write the complete review. Target Chinese characters: "
-            f"{task.output.target_chinese_characters}. Return schema: "
-            '{"title":"","abstract":"","keywords":[],"introduction":"",'
-            '"sections":[{"heading":"","body":""}],"conclusion":"",'
-            '"limitations":""}. Do not include a manually written reference list; Pandoc will '
-            "render it from verified metadata.\n"
-            + json.dumps(
-                {
-                    "task": _task_payload(task),
-                    "approved_outline": outline_payload,
-                    "evidence_digest": evidence_digest,
-                    "perspective_audit": perspective_payload,
-                },
-                ensure_ascii=False,
-            )
-        ),
-        max_output_tokens=min(20_000, max(6_000, task.output.target_chinese_characters * 2)),
-        temperature=task.models.temperature,
+    writing_checkpoints["perspective_audit"] = perspective_payload
+    writing_checkpoints["outline"] = outline_payload
+    _write_writing_checkpoints(output, writing_checkpoints)
+    draft_payload = await _generate_sectioned_draft(
+        task,
+        outline_payload,
+        evidence_digest,
+        perspective_payload,
+        client,
+        output,
+        writing_checkpoints,
+        checkpoint_key="initial",
     )
     markdown = render_review_markdown(draft_payload)
     (draft_dir / "review.json").write_text(
@@ -157,28 +148,17 @@ async def generate_review(
                 break
             if review_round >= task.models.max_revision_rounds:
                 break
-            draft_payload = await client.complete_json(
-                model_alias=task.models.primary_model,
-                system=REVISION_SYSTEM,
-                prompt=(
-                    "Return the same complete review schema: "
-                    '{"title":"","abstract":"","keywords":[],"introduction":"",'
-                    '"sections":[{"heading":"","body":""}],"conclusion":"",'
-                    '"limitations":""}.\n'
-                    + json.dumps(
-                        {
-                            "task": _task_payload(task),
-                            "evidence_digest": evidence_digest,
-                            "current_draft": markdown,
-                            "independent_audit": reviewer_payload,
-                        },
-                        ensure_ascii=False,
-                    )
-                ),
-                max_output_tokens=min(
-                    20_000, max(6_000, task.output.target_chinese_characters * 2)
-                ),
-                temperature=0.1,
+            draft_payload = await _generate_sectioned_draft(
+                task,
+                outline_payload,
+                evidence_digest,
+                perspective_payload,
+                client,
+                output,
+                writing_checkpoints,
+                checkpoint_key=f"revision_{review_round + 1}",
+                current_payload=draft_payload,
+                reviewer_payload=reviewer_payload,
             )
             markdown = render_review_markdown(draft_payload)
             (draft_dir / f"review_revision_{review_round + 1}.json").write_text(
@@ -196,6 +176,215 @@ async def generate_review(
                 encoding="utf-8",
             )
     return markdown, draft_payload, reviewer_payload
+
+
+async def _generate_sectioned_draft(
+    task: TaskSpec,
+    outline_payload: dict[str, Any],
+    evidence_digest: list[dict[str, Any]],
+    perspective_payload: dict[str, Any],
+    client: LLMClient,
+    output: Path,
+    writing_checkpoints: dict[str, Any],
+    *,
+    checkpoint_key: str,
+    current_payload: dict[str, Any] | None = None,
+    reviewer_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Generate or revise bounded review parts, then assemble them deterministically."""
+    outline_sections = [
+        dict(item) for item in outline_payload.get("sections") or [] if isinstance(item, dict)
+    ]
+    introduction_index = 0 if outline_sections else None
+    conclusion_index = len(outline_sections) - 1 if len(outline_sections) >= 2 else None
+    limitations_index = next(
+        (
+            index
+            for index, item in enumerate(outline_sections)
+            if "局限" in str(item.get("heading") or "")
+        ),
+        None,
+    )
+    excluded = {
+        index
+        for index in (introduction_index, conclusion_index, limitations_index)
+        if index is not None
+    }
+    main_indices = [index for index in range(len(outline_sections)) if index not in excluded]
+    total_target = task.output.target_chinese_characters
+    structural_target = max(1_500, int(total_target * 0.30))
+    section_target = max(400, int(total_target * 0.65 / max(len(main_indices), 1)))
+
+    all_parts = writing_checkpoints.setdefault("draft_parts", {})
+    if not isinstance(all_parts, dict):
+        all_parts = {}
+        writing_checkpoints["draft_parts"] = all_parts
+    seeded_parts = all_parts.get(checkpoint_key)
+    parts = dict(seeded_parts) if isinstance(seeded_parts, dict) else {}
+    all_parts[checkpoint_key] = parts
+
+    structural = parts.get("structural")
+    if not isinstance(structural, dict):
+        structural_roles = [
+            outline_sections[index]
+            for index in (introduction_index, limitations_index, conclusion_index)
+            if index is not None
+        ]
+        structural_ids = {
+            evidence_id for role in structural_roles for evidence_id in _outline_evidence_ids(role)
+        }
+        structural = await client.complete_json(
+            model_alias=task.models.primary_model,
+            system=(
+                SECTION_REVISION_SYSTEM if reviewer_payload is not None else SECTION_WRITING_SYSTEM
+            ),
+            prompt=(
+                "Return schema: "
+                '{"title":"","abstract":"","keywords":[],"introduction":"",'
+                '"conclusion":"","limitations":""}. '
+                f"The combined target is about {structural_target} Chinese characters. "
+                "The abstract must not introduce facts absent from the cited review.\n"
+                + json.dumps(
+                    {
+                        "task": _task_payload(task),
+                        "central_argument": outline_payload.get("central_argument"),
+                        "outline_roles": structural_roles,
+                        "evidence_digest": _filter_evidence_digest(evidence_digest, structural_ids),
+                        "perspective_audit": perspective_payload,
+                        "current_part": _current_structural_part(current_payload),
+                        "review_audit": reviewer_payload,
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            max_output_tokens=6_000,
+            temperature=0.1 if reviewer_payload is not None else task.models.temperature,
+        )
+        parts["structural"] = structural
+        _write_writing_checkpoints(output, writing_checkpoints)
+
+    seeded_sections = parts.get("sections")
+    section_parts = dict(seeded_sections) if isinstance(seeded_sections, dict) else {}
+    parts["sections"] = section_parts
+    assembled_sections: list[dict[str, str]] = []
+    for index in main_indices:
+        role = outline_sections[index]
+        part_key = str(index + 1)
+        section_payload = section_parts.get(part_key)
+        if not isinstance(section_payload, dict):
+            evidence_ids = set(_outline_evidence_ids(role))
+            section_payload = await client.complete_json(
+                model_alias=task.models.primary_model,
+                system=(
+                    SECTION_REVISION_SYSTEM
+                    if reviewer_payload is not None
+                    else SECTION_WRITING_SYSTEM
+                ),
+                prompt=(
+                    'Return schema: {"heading":"","body":""}. '
+                    f"Target about {section_target} Chinese characters. Use the supplied "
+                    "Pandoc citation keys for every material claim.\n"
+                    + json.dumps(
+                        {
+                            "task": _task_payload(task),
+                            "central_argument": outline_payload.get("central_argument"),
+                            "section_role": role,
+                            "required_disagreements": outline_payload.get("required_disagreements"),
+                            "evidence_digest": _filter_evidence_digest(
+                                evidence_digest, evidence_ids
+                            ),
+                            "current_part": _current_section_part(
+                                current_payload, str(role.get("heading") or "")
+                            ),
+                            "review_audit": reviewer_payload,
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+                max_output_tokens=3_000,
+                temperature=0.1 if reviewer_payload is not None else task.models.temperature,
+            )
+            section_parts[part_key] = section_payload
+            _write_writing_checkpoints(output, writing_checkpoints)
+        body = str(section_payload.get("body") or "").strip()
+        heading = str(role.get("heading") or section_payload.get("heading") or "").strip()
+        if heading and body:
+            assembled_sections.append({"heading": heading, "body": body})
+
+    if not outline_sections and isinstance(structural.get("sections"), list):
+        assembled_sections = [
+            {"heading": str(item.get("heading") or ""), "body": str(item.get("body") or "")}
+            for item in structural.get("sections") or []
+            if isinstance(item, dict)
+        ]
+    return {
+        "title": str(structural.get("title") or task.title).strip(),
+        "abstract": str(structural.get("abstract") or "").strip(),
+        "keywords": _string_list(structural.get("keywords")),
+        "introduction": str(structural.get("introduction") or "").strip(),
+        "sections": assembled_sections,
+        "conclusion": str(structural.get("conclusion") or "").strip(),
+        "limitations": str(structural.get("limitations") or "").strip(),
+    }
+
+
+def _outline_evidence_ids(role: dict[str, Any]) -> list[str]:
+    return _string_list(role.get("evidence_ids"))
+
+
+def _filter_evidence_digest(
+    evidence_digest: list[dict[str, Any]], evidence_ids: set[str]
+) -> list[dict[str, Any]]:
+    if not evidence_ids:
+        return evidence_digest
+    filtered: list[dict[str, Any]] = []
+    for batch in evidence_digest:
+        summaries = [
+            summary
+            for summary in batch.get("source_summaries") or []
+            if isinstance(summary, dict)
+            and evidence_ids.intersection(_string_list(summary.get("evidence_ids")))
+        ]
+        observations = [
+            observation
+            for observation in batch.get("cross_source_observations") or []
+            if isinstance(observation, dict)
+            and evidence_ids.intersection(_string_list(observation.get("evidence_ids")))
+        ]
+        if summaries or observations:
+            filtered.append(
+                {
+                    "batch_number": batch.get("batch_number"),
+                    "source_summaries": summaries,
+                    "cross_source_observations": observations,
+                }
+            )
+    return filtered or evidence_digest
+
+
+def _current_structural_part(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    return {
+        key: payload.get(key)
+        for key in ("title", "abstract", "keywords", "introduction", "conclusion", "limitations")
+    }
+
+
+def _current_section_part(payload: dict[str, Any] | None, heading: str) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    for section in payload.get("sections") or []:
+        if isinstance(section, dict) and str(section.get("heading") or "") == heading:
+            return section
+    return None
+
+
+def _write_writing_checkpoints(output: Path, checkpoints: dict[str, Any]) -> None:
+    (output / "audit" / "writing_checkpoints.json").write_text(
+        json.dumps(checkpoints, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 async def _audit_perspectives(

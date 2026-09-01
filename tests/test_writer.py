@@ -218,6 +218,88 @@ async def test_seeded_digest_batches_skip_completed_model_calls(tmp_path) -> Non
     assert (tmp_path / "audit" / "writing_checkpoints.json").is_file()
 
 
+@pytest.mark.asyncio
+async def test_sectioned_draft_uses_bounded_calls_and_checkpoints(tmp_path) -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={
+            "enabled": True,
+            "primary_model": "kimi-k2.6",
+            "perspective_model": "kimi-k2.6",
+            "reviewer_model": "kimi-k2.6",
+            "allow_same_model_quality_checks": True,
+            "max_revision_rounds": 0,
+        },
+    )
+    paper = PaperRecord(record_id="p1", title="Test paper", doi="10.1/test")
+    card = EvidenceCard(
+        evidence_id="e1",
+        record_id="p1",
+        claim="测试主张",
+        evidence_type="abstract",
+        result="测试结果",
+    )
+    digest = [
+        {
+            "batch_number": 1,
+            "source_summaries": [
+                {
+                    "citation_key": "ref_50c81ef030",
+                    "evidence_ids": ["e1"],
+                    "supported_findings": ["测试结果"],
+                }
+            ],
+        }
+    ]
+    outline = {
+        "central_argument": "测试",
+        "sections": [
+            {"heading": "引言", "purpose": "介绍", "evidence_ids": ["e1"]},
+            {"heading": "核心结果", "purpose": "综合", "evidence_ids": ["e1"]},
+            {"heading": "局限", "purpose": "局限", "evidence_ids": ["e1"]},
+            {"heading": "结论", "purpose": "总结", "evidence_ids": ["e1"]},
+        ],
+    }
+    structural = {
+        "title": "测试综述",
+        "abstract": "摘要",
+        "keywords": ["测试"],
+        "introduction": "引言。[@ref_50c81ef030]",
+        "conclusion": "结论。[@ref_50c81ef030]",
+        "limitations": "局限。[@ref_50c81ef030]",
+    }
+    client = FakeClient(
+        [
+            structural,
+            {"heading": "核心结果", "body": "分节正文。[@ref_50c81ef030]"},
+            {"verdict": "pass", "issues": []},
+        ]
+    )
+    (tmp_path / "audit").mkdir()
+
+    markdown, payload, _ = await generate_review(
+        task,
+        [paper],
+        [card],
+        client,
+        tmp_path,
+        initial_evidence_digest=digest,
+        initial_writing_checkpoints={
+            "perspective_audit": {"evidence_clusters": [], "contradictions": []},
+            "outline": outline,
+        },
+    )
+
+    assert client.calls == 3
+    assert payload["sections"] == [{"heading": "核心结果", "body": "分节正文。[@ref_50c81ef030]"}]
+    assert "分节正文" in markdown
+    checkpoint = (tmp_path / "audit" / "writing_checkpoints.json").read_text(encoding="utf-8")
+    assert '"initial"' in checkpoint
+    assert '"sections"' in checkpoint
+
+
 def test_digest_batches_preserve_every_source_and_drop_unknown_ids() -> None:
     packet = [
         {
