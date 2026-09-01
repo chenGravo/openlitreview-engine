@@ -15,6 +15,7 @@ Node dependency graph are locked in repository files; release provenance must re
 | zotero-chinese/styles | GB/T 7714—2025 CSL-M asset | CC BY-SA 3.0 |
 | BGE-M3 | Optional semantic retrieval model | MIT |
 | BGE Reranker v2 M3 | Optional reranking model | Apache-2.0 |
+| Noto CJK | Cloud DOCX/PDF Chinese font rendering; installed by the workspace, not bundled here | SIL Open Font License 1.1 |
 
 The bundled GB/T style is copied from `zotero-chinese/styles` only after pinning an upstream commit. Its attribution and original license must remain adjacent to the asset.
 The citeproc-js upstream notice is retained at `node/CITEPROC_NOTICE.txt`.

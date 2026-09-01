@@ -25,6 +25,7 @@ openlitreview search examples/task.example.yml --output runs/demo
 ```
 
 正式使用由配套的私人 workspace 模板执行。模板不会配置定时任务或常驻服务，只有用户手动触发时才消耗 GitHub Actions 分钟和模型 API 额度。
+云端模板安装自由字体 Noto Serif/Sans CJK SC：中文正文采用衬线体，标题采用无衬线体；英文与数字保留 Times New Roman，使 DOCX/PDF 在无“宋体/黑体”的 Linux 渲染环境中也能稳定输出中文。
 
 每次任务可以在 YAML 中直接填写 `user_requirements`，也可以通过
 `writing_requirements_file` 读取同一任务目录内的 Markdown、TXT、DOCX 或 PDF 要求文件。

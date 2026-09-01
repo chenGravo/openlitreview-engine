@@ -1,4 +1,4 @@
-from openlitreview.audit import audit_run
+from openlitreview.audit import _unfinished_section_endings, audit_run
 from openlitreview.schemas import EvidenceCard, PaperRecord, SearchRun, TaskSpec
 
 
@@ -37,3 +37,25 @@ def test_unknown_citation_blocks_draft(tmp_path) -> None:
     )
     assert report["status"] == "blocked"
     assert report["unknown_citations"] == ["invented_reference"]
+
+
+def test_unfinished_section_endings_detect_truncated_prose() -> None:
+    markdown = """## 摘要
+
+摘要正文。
+
+**关键词：** 测试；审计
+
+## 1 完整章节
+
+完整论述。[@known]
+
+## 2 截断章节
+
+上述发现不可直接解读为
+
+## 参考文献
+
+[1] Example.
+"""
+    assert _unfinished_section_endings(markdown) == ["2 截断章节"]

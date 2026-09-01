@@ -9,6 +9,10 @@ from .schemas import EvidenceCard, SearchRun, TaskSpec
 from .storage import citation_key
 
 CITATION_RE = re.compile(r"@([A-Za-z0-9_.:-]+)")
+SECTION_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+TRAILING_CITATIONS_RE = re.compile(r"(?:\s*\[@[^\]]+\])+\s*$")
+SENTENCE_ENDINGS = frozenset("。！？；：.!?;:…")
+TRAILING_CLOSERS = frozenset("”’\"'）)]】》〉」』*_`")
 
 
 def audit_run(
@@ -60,6 +64,7 @@ def audit_run(
     used_keys: set[str] = set()
     unknown_keys: set[str] = set()
     uncited_paragraphs: list[str] = []
+    unfinished_sections: list[str] = []
     if markdown:
         used_keys = set(CITATION_RE.findall(markdown))
         unknown_keys = used_keys - set(known)
@@ -86,6 +91,18 @@ def audit_run(
                     "code": "long_paragraphs_without_citations",
                     "message": (
                         f"Found {len(uncited_paragraphs)} long paragraphs without citations."
+                    ),
+                }
+            )
+        unfinished_sections = _unfinished_section_endings(markdown)
+        if unfinished_sections:
+            findings.append(
+                {
+                    "severity": "high",
+                    "code": "unfinished_section_endings",
+                    "message": (
+                        "Section text does not end with complete sentence punctuation: "
+                        f"{unfinished_sections}"
                     ),
                 }
             )
@@ -192,6 +209,7 @@ def audit_run(
         "citations_used": len(used_keys),
         "unknown_citations": sorted(unknown_keys),
         "uncited_long_paragraphs": uncited_paragraphs,
+        "unfinished_sections": unfinished_sections,
         "model_review_mode": reviewer_mode,
         "model_review_verdict": reviewer_verdict,
         "findings": findings,
@@ -207,6 +225,31 @@ def audit_run(
         _report_markdown(report), encoding="utf-8"
     )
     return report
+
+
+def _unfinished_section_endings(markdown: str) -> list[str]:
+    """Find prose sections whose final substantive sentence appears truncated."""
+    headings = list(SECTION_HEADING_RE.finditer(markdown))
+    unfinished: list[str] = []
+    for index, match in enumerate(headings):
+        heading = match.group(1).strip()
+        if heading in {"摘要", "参考文献"}:
+            continue
+        body_end = headings[index + 1].start() if index + 1 < len(headings) else len(markdown)
+        body = markdown[match.end() : body_end].strip()
+        if not body:
+            unfinished.append(heading)
+            continue
+        paragraphs = [item.strip() for item in re.split(r"\n\s*\n", body) if item.strip()]
+        if not paragraphs:
+            unfinished.append(heading)
+            continue
+        ending = TRAILING_CITATIONS_RE.sub("", paragraphs[-1]).rstrip()
+        while ending and ending[-1] in TRAILING_CLOSERS:
+            ending = ending[:-1].rstrip()
+        if not ending or ending[-1] not in SENTENCE_ENDINGS:
+            unfinished.append(heading)
+    return unfinished
 
 
 def _report_markdown(report: dict[str, Any]) -> str:

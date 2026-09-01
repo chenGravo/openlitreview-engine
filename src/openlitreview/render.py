@@ -14,6 +14,9 @@ from docx.enum.text import WD_LINE_SPACING
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
+CHINESE_BODY_FONT = "Noto Serif CJK SC"
+CHINESE_HEADING_FONT = "Noto Sans CJK SC"
+
 
 def render_documents(output: Path) -> dict[str, Any]:
     draft = output / "draft" / "review.md"
@@ -137,23 +140,25 @@ def _postprocess_docx(path: Path) -> None:
     normal = document.styles["Normal"]
     normal.font.name = "Times New Roman"
     normal.font.size = Pt(12)
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), CHINESE_BODY_FONT)
+    normal._element.rPr.rFonts.set(qn("w:hint"), "eastAsia")
     normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.ONE_POINT_FIVE
     normal.paragraph_format.first_line_indent = Cm(0.74)
     normal.paragraph_format.space_after = Pt(0)
 
-    for style_name, chinese_font, size in (
-        ("Title", "黑体", 18),
-        ("Heading 1", "黑体", 15),
-        ("Heading 2", "黑体", 14),
-        ("Heading 3", "黑体", 12),
+    for style_name, size in (
+        ("Title", 18),
+        ("Heading 1", 15),
+        ("Heading 2", 14),
+        ("Heading 3", 12),
     ):
         if style_name not in document.styles:
             continue
         style = document.styles[style_name]
         style.font.name = "Times New Roman"
         style.font.size = Pt(size)
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), chinese_font)
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), CHINESE_HEADING_FONT)
+        style._element.rPr.rFonts.set(qn("w:hint"), "eastAsia")
 
     in_references = False
     for paragraph in document.paragraphs:

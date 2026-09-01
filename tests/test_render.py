@@ -7,9 +7,14 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import Cm
 
-from openlitreview.render import _postprocess_docx
+from openlitreview.render import (
+    CHINESE_BODY_FONT,
+    CHINESE_HEADING_FONT,
+    _postprocess_docx,
+)
 
 
 def test_postprocess_docx_applies_chinese_review_layout(tmp_path: Path) -> None:
@@ -27,6 +32,12 @@ def test_postprocess_docx_applies_chinese_review_layout(tmp_path: Path) -> None:
     section = result.sections[0]
     assert abs(section.left_margin - Cm(3.0)) < 2_000
     assert abs(section.right_margin - Cm(2.5)) < 2_000
+    normal_fonts = result.styles["Normal"]._element.rPr.rFonts
+    title_fonts = result.styles["Title"]._element.rPr.rFonts
+    assert normal_fonts.get(qn("w:eastAsia")) == CHINESE_BODY_FONT
+    assert normal_fonts.get(qn("w:hint")) == "eastAsia"
+    assert title_fonts.get(qn("w:eastAsia")) == CHINESE_HEADING_FONT
+    assert title_fonts.get(qn("w:hint")) == "eastAsia"
     reference = result.paragraphs[-1]
     assert abs(reference.paragraph_format.left_indent - Cm(0.74)) < 2_000
     assert abs(reference.paragraph_format.first_line_indent - Cm(-0.74)) < 2_000
