@@ -21,7 +21,9 @@ and future directions. Do not invent citations or facts. Return strict JSON only
 REVIEW_SYSTEM = """You are an academic evidence auditor. Compare the supplied
 Chinese draft against the evidence cards. Identify unsupported, overstated, causal, numerical,
 medical-safety, contradictory, or missing-counterevidence claims. Do not rewrite for style and do
-not invent sources. Return strict JSON only."""
+not invent sources. Use verdict `revise` or `reject` only when at least one high-severity issue
+remains; use verdict `pass` when no high-severity issue remains, even if you report medium or low
+items for later human review. Return strict JSON only."""
 
 PERSPECTIVE_SYSTEM = """You are the pre-writing cross-evidence perspective auditor for a Chinese
 academic literature review. Use only the supplied evidence cards. Identify competing explanations,
@@ -242,33 +244,46 @@ async def _generate_sectioned_draft(
         structural_ids = {
             evidence_id for role in structural_roles for evidence_id in _outline_evidence_ids(role)
         }
-        structural = await client.complete_json(
-            model_alias=task.models.primary_model,
-            system=(
-                SECTION_REVISION_SYSTEM if reviewer_payload is not None else SECTION_WRITING_SYSTEM
-            ),
-            prompt=(
-                "Return schema: "
-                '{"title":"","abstract":"","keywords":[],"introduction":"",'
-                '"conclusion":"","limitations":""}. '
-                f"The combined target is about {structural_target} Chinese characters. "
-                "The abstract must not introduce facts absent from the cited review.\n"
-                + json.dumps(
-                    {
-                        "task": _task_payload(task),
-                        "central_argument": outline_payload.get("central_argument"),
-                        "outline_roles": structural_roles,
-                        "evidence_digest": _filter_evidence_digest(evidence_digest, structural_ids),
-                        "perspective_audit": perspective_payload,
-                        "current_part": _current_structural_part(current_payload),
-                        "review_audit": reviewer_payload,
-                    },
-                    ensure_ascii=False,
-                )
-            ),
-            max_output_tokens=6_000,
-            temperature=0.1 if reviewer_payload is not None else task.models.temperature,
-        )
+        current_structural = _current_structural_part(current_payload)
+        structural_review = _review_payload_for_part(reviewer_payload, structural=True)
+        if (
+            reviewer_payload is not None
+            and current_structural is not None
+            and structural_review is None
+        ):
+            structural = current_structural
+        else:
+            structural = await client.complete_json(
+                model_alias=task.models.primary_model,
+                system=(
+                    SECTION_REVISION_SYSTEM
+                    if reviewer_payload is not None
+                    else SECTION_WRITING_SYSTEM
+                ),
+                prompt=(
+                    "Return schema: "
+                    '{"title":"","abstract":"","keywords":[],"introduction":"",'
+                    '"conclusion":"","limitations":""}. '
+                    f"The combined target is about {structural_target} Chinese characters. "
+                    "The abstract must not introduce facts absent from the cited review.\n"
+                    + json.dumps(
+                        {
+                            "task": _task_payload(task),
+                            "central_argument": outline_payload.get("central_argument"),
+                            "outline_roles": structural_roles,
+                            "evidence_digest": _filter_evidence_digest(
+                                evidence_digest, structural_ids
+                            ),
+                            "perspective_audit": perspective_payload,
+                            "current_part": current_structural,
+                            "review_audit": structural_review,
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+                max_output_tokens=6_000,
+                temperature=0.1 if reviewer_payload is not None else task.models.temperature,
+            )
         structural = _normalize_part_citations(structural, citation_aliases)
         parts["structural"] = structural
         _write_writing_checkpoints(output, writing_checkpoints)
@@ -287,37 +302,53 @@ async def _generate_sectioned_draft(
         section_payload = section_parts.get(part_key)
         if not isinstance(section_payload, dict):
             evidence_ids = set(_outline_evidence_ids(role))
-            section_payload = await client.complete_json(
-                model_alias=task.models.primary_model,
-                system=(
-                    SECTION_REVISION_SYSTEM
-                    if reviewer_payload is not None
-                    else SECTION_WRITING_SYSTEM
-                ),
-                prompt=(
-                    'Return schema: {"heading":"","body":""}. '
-                    f"Target about {section_target} Chinese characters. Use the supplied "
-                    "Pandoc citation keys for every material claim.\n"
-                    + json.dumps(
-                        {
-                            "task": _task_payload(task),
-                            "central_argument": outline_payload.get("central_argument"),
-                            "section_role": role,
-                            "required_disagreements": outline_payload.get("required_disagreements"),
-                            "evidence_digest": _filter_evidence_digest(
-                                evidence_digest, evidence_ids
-                            ),
-                            "current_part": _current_section_part(
-                                current_payload, str(role.get("heading") or "")
-                            ),
-                            "review_audit": reviewer_payload,
-                        },
-                        ensure_ascii=False,
-                    )
-                ),
-                max_output_tokens=3_000,
-                temperature=0.1 if reviewer_payload is not None else task.models.temperature,
+            heading = str(role.get("heading") or "")
+            current_section = _current_section_part(current_payload, heading)
+            section_review = _review_payload_for_part(
+                reviewer_payload,
+                heading=heading,
+                part_number=index + 1,
             )
+            if (
+                reviewer_payload is not None
+                and current_section is not None
+                and section_review is None
+            ):
+                section_payload = current_section
+            else:
+                section_payload = await client.complete_json(
+                    model_alias=task.models.primary_model,
+                    system=(
+                        SECTION_REVISION_SYSTEM
+                        if reviewer_payload is not None
+                        else SECTION_WRITING_SYSTEM
+                    ),
+                    prompt=(
+                        'Return schema: {"heading":"","body":""}. '
+                        f"Target about {section_target} Chinese characters. Use the supplied "
+                        "Pandoc citation keys for every material claim.\n"
+                        + json.dumps(
+                            {
+                                "task": _task_payload(task),
+                                "central_argument": outline_payload.get("central_argument"),
+                                "section_role": role,
+                                "required_disagreements": outline_payload.get(
+                                    "required_disagreements"
+                                ),
+                                "evidence_digest": _filter_evidence_digest(
+                                    evidence_digest, evidence_ids
+                                ),
+                                "current_part": current_section,
+                                "review_audit": section_review,
+                            },
+                            ensure_ascii=False,
+                        )
+                    ),
+                    max_output_tokens=3_000,
+                    temperature=(
+                        0.1 if reviewer_payload is not None else task.models.temperature
+                    ),
+                )
             section_payload = _normalize_part_citations(section_payload, citation_aliases)
             section_parts[part_key] = section_payload
             _write_writing_checkpoints(output, writing_checkpoints)
@@ -441,6 +472,51 @@ def _current_section_part(payload: dict[str, Any] | None, heading: str) -> dict[
         if isinstance(section, dict) and str(section.get("heading") or "") == heading:
             return section
     return None
+
+
+def _review_payload_for_part(
+    reviewer_payload: dict[str, Any] | None,
+    *,
+    heading: str = "",
+    part_number: int | None = None,
+    structural: bool = False,
+) -> dict[str, Any] | None:
+    """Return only review issues that require changing this bounded draft part."""
+    if not isinstance(reviewer_payload, dict):
+        return None
+    issues = [
+        issue for issue in reviewer_payload.get("issues") or [] if isinstance(issue, dict)
+    ]
+    verdict = str(reviewer_payload.get("verdict") or "").lower()
+    if not issues:
+        return reviewer_payload if verdict in {"revise", "reject"} else None
+
+    relevant: list[dict[str, Any]] = []
+    heading_core = re.sub(r"^\s*\d+[.、：:\s]*", "", heading).strip()
+    global_markers = ("全文", "全篇", "整篇", "各节", "多处")
+    structural_markers = ("标题", "摘要", "引言", "结论", "局限")
+    for issue in issues:
+        location = str(issue.get("location") or "").strip()
+        applies_globally = not location or any(marker in location for marker in global_markers)
+        if applies_globally:
+            relevant.append(issue)
+            continue
+        if structural and any(marker in location for marker in structural_markers):
+            relevant.append(issue)
+            continue
+        if structural:
+            continue
+        if part_number is not None and re.search(rf"第\s*{part_number}\s*节", location):
+            relevant.append(issue)
+            continue
+        if heading_core and len(heading_core) >= 4 and heading_core in location:
+            relevant.append(issue)
+
+    if not relevant:
+        return None
+    filtered = dict(reviewer_payload)
+    filtered["issues"] = relevant
+    return filtered
 
 
 def _write_writing_checkpoints(output: Path, checkpoints: dict[str, Any]) -> None:

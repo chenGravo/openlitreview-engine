@@ -9,6 +9,7 @@ from openlitreview.writer import (
     _citation_aliases_from_digest,
     _normalize_part_citations,
     _paper_batches,
+    _review_payload_for_part,
     _sanitize_batch_digest,
     generate_review,
 )
@@ -368,3 +369,24 @@ def test_evidence_card_citations_are_mapped_to_verified_paper_keys() -> None:
 
     assert normalized["introduction"] == "引言。[@ref_50c81ef030]"
     assert normalized["sections"][0]["body"] == "正文。[@ref_50c81ef030]"
+
+
+def test_review_issues_are_routed_only_to_named_draft_parts() -> None:
+    review = {
+        "verdict": "revise",
+        "issues": [
+            {"severity": "high", "location": "第10节低响应者特征"},
+            {"severity": "high", "location": "结论部分"},
+        ],
+    }
+
+    section_10 = _review_payload_for_part(
+        review, heading="10 低响应者特征的假说性框架", part_number=10
+    )
+
+    assert section_10 is not None
+    assert section_10["issues"] == [review["issues"][0]]
+    assert _review_payload_for_part(review, heading="9 相反证据", part_number=9) is None
+    structural = _review_payload_for_part(review, structural=True)
+    assert structural is not None
+    assert structural["issues"] == [review["issues"][1]]
