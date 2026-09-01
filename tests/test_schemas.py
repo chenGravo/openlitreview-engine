@@ -211,3 +211,6 @@ def test_default_model_route_uses_deepseek_flash_and_kimi() -> None:
     assert task.models.perspective_model == "kimi-k2.6"
     assert task.models.reviewer_model == "kimi-k2.6"
     assert task.models.allow_same_model_quality_checks is True
+    assert task.budget.deepseek_task_cap_cny == 15
+    assert task.budget.kimi_task_cap_cny == 20
+    assert task.budget.monthly_hard_stop_cny == 99

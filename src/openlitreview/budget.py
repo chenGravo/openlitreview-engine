@@ -48,6 +48,7 @@ class BudgetLedger:
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS task_budget (
                     task_id TEXT PRIMARY KEY,
+                    budget_group_id TEXT NOT NULL DEFAULT '',
                     month TEXT NOT NULL,
                     reserved_cny TEXT NOT NULL,
                     actual_cny TEXT NOT NULL DEFAULT '0',
@@ -71,6 +72,21 @@ class BudgetLedger:
                 );
                 """
             )
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(task_budget)").fetchall()
+            }
+            if "budget_group_id" not in columns:
+                connection.execute(
+                    "ALTER TABLE task_budget ADD COLUMN budget_group_id TEXT NOT NULL DEFAULT ''"
+                )
+            rows_without_group = connection.execute(
+                "SELECT task_id FROM task_budget WHERE budget_group_id = ''"
+            ).fetchall()
+            for row in rows_without_group:
+                connection.execute(
+                    "UPDATE task_budget SET budget_group_id = ? WHERE task_id = ?",
+                    (_budget_group_id(row["task_id"]), row["task_id"]),
+                )
             legacy_failures = connection.execute(
                 "SELECT task_id FROM task_budget WHERE status = 'failed_reserved'"
             ).fetchall()
@@ -87,6 +103,7 @@ class BudgetLedger:
 
     def reserve_task(self, task_id: str, amount_cny: Decimal | None = None) -> dict[str, str]:
         amount = amount_cny or Decimal(str(self.settings.task_reservation_cny))
+        budget_group_id = _budget_group_id(task_id)
         month = _month()
         now = _now()
         with self._transaction() as connection:
@@ -104,10 +121,11 @@ class BudgetLedger:
             connection.execute(
                 """
                 INSERT INTO task_budget
-                    (task_id, month, reserved_cny, actual_cny, status, created_at, updated_at)
-                VALUES (?, ?, ?, '0', 'reserved', ?, ?)
+                    (task_id, budget_group_id, month, reserved_cny, actual_cny, status,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, '0', 'reserved', ?, ?)
                 """,
-                (task_id, month, str(amount), now, now),
+                (task_id, budget_group_id, month, str(amount), now, now),
             )
         return self.task_summary(task_id)
 
@@ -136,7 +154,10 @@ class BudgetLedger:
                 raise BudgetExceeded("Task budget must be reserved before any model request")
             if task["status"] not in {"reserved", "running"}:
                 raise BudgetExceeded(f"Task budget is not active: {task['status']}")
-            consumed = self._task_calls_reserved_or_spent(connection, task_id)
+            budget_group_id = task["budget_group_id"] or _budget_group_id(task_id)
+            consumed = self._budget_group_calls_reserved_or_spent(
+                connection, budget_group_id
+            )
             reserved = Decimal(task["reserved_cny"])
             if (
                 not self.settings.quality_trial_unlimited
@@ -145,10 +166,10 @@ class BudgetLedger:
                 raise BudgetExceeded(
                     f"Task reservation would be exceeded: {consumed} + {estimated} > {reserved}"
                 )
-            model_consumed = self._task_provider_calls_reserved_or_spent(
-                connection, task_id, price.provider
+            model_consumed = self._budget_group_provider_calls_reserved_or_spent(
+                connection, budget_group_id, price.provider
             )
-            model_cap = Decimal(str(self.settings.per_model_task_cap_cny))
+            model_cap = Decimal(str(self.settings.provider_task_cap_cny(price.provider)))
             if (
                 not self.settings.quality_trial_unlimited
                 and model_consumed + estimated > model_cap
@@ -274,7 +295,11 @@ class BudgetLedger:
             "warning_cny": str(self.settings.monthly_warning_cny),
             "hard_stop_cny": str(self.settings.monthly_hard_stop_cny),
             "external_cap_cny": str(self.settings.external_monthly_cap_cny),
-            "per_model_task_cap_cny": str(self.settings.per_model_task_cap_cny),
+            "deepseek_task_cap_cny": str(self.settings.deepseek_task_cap_cny),
+            "kimi_task_cap_cny": str(self.settings.kimi_task_cap_cny),
+            "other_provider_task_cap_cny": str(
+                self.settings.other_provider_task_cap_cny
+            ),
             "monthly_per_model_cap_cny": str(self.settings.monthly_per_model_cap_cny),
             "tasks": [dict(row) for row in rows],
         }
@@ -300,12 +325,17 @@ class BudgetLedger:
         )
 
     @staticmethod
-    def _task_calls_reserved_or_spent(
-        connection: sqlite3.Connection, task_id: str
+    def _budget_group_calls_reserved_or_spent(
+        connection: sqlite3.Connection, budget_group_id: str
     ) -> Decimal:
         rows = connection.execute(
-            "SELECT estimated_cny, actual_cny, status FROM model_call WHERE task_id = ?",
-            (task_id,),
+            """
+            SELECT model_call.estimated_cny, model_call.actual_cny
+            FROM model_call
+            JOIN task_budget ON task_budget.task_id = model_call.task_id
+            WHERE task_budget.budget_group_id = ?
+            """,
+            (budget_group_id,),
         ).fetchall()
         return sum(
             Decimal(row["actual_cny"])
@@ -315,16 +345,17 @@ class BudgetLedger:
         )
 
     @staticmethod
-    def _task_provider_calls_reserved_or_spent(
-        connection: sqlite3.Connection, task_id: str, provider: str
+    def _budget_group_provider_calls_reserved_or_spent(
+        connection: sqlite3.Connection, budget_group_id: str, provider: str
     ) -> Decimal:
         rows = connection.execute(
             """
-            SELECT estimated_cny, actual_cny
+            SELECT model_call.estimated_cny, model_call.actual_cny
             FROM model_call
-            WHERE task_id = ? AND provider = ?
+            JOIN task_budget ON task_budget.task_id = model_call.task_id
+            WHERE task_budget.budget_group_id = ? AND model_call.provider = ?
             """,
-            (task_id, provider),
+            (budget_group_id, provider),
         ).fetchall()
         return sum(
             Decimal(row["actual_cny"])
@@ -373,3 +404,10 @@ def _month() -> str:
 
 def _now() -> str:
     return datetime.now(SHANGHAI).isoformat()
+
+
+def _budget_group_id(task_id: str) -> str:
+    for marker in (":gh-", ":local-"):
+        if marker in task_id:
+            return task_id.split(marker, 1)[0]
+    return task_id

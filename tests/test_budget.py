@@ -29,7 +29,75 @@ def test_monthly_hard_stop_blocks_new_task(tmp_path) -> None:
     ledger.reserve_task("task-2", Decimal("30"))
     ledger.reserve_task("task-3", Decimal("30"))
     with pytest.raises(BudgetExceeded, match="hard stop"):
-        ledger.reserve_task("task-4", Decimal("1"))
+        ledger.reserve_task("task-4", Decimal("10"))
+
+
+def test_default_provider_task_caps_are_kimi_twenty_deepseek_fifteen(tmp_path) -> None:
+    settings = BudgetSettings(single_request_cap_cny=10)
+    ledger = BudgetLedger(tmp_path / "budget.sqlite", settings)
+    ledger.reserve_task("review:gh-1-1")
+
+    for input_tokens in (1_500_000, 500_000):
+        kimi_call, _ = ledger.authorize_call(
+            "review:gh-1-1",
+            "kimi-k2.6",
+            input_tokens=input_tokens,
+            max_output_tokens=0,
+            uncertainty_multiplier=Decimal("1"),
+        )
+        ledger.reconcile_call(kimi_call, input_tokens, 0)
+    with pytest.raises(BudgetExceeded, match="Per-model/provider task cap"):
+        ledger.authorize_call(
+            "review:gh-1-1",
+            "kimi-k2.6",
+            input_tokens=1_100_000,
+            max_output_tokens=0,
+            uncertainty_multiplier=Decimal("1"),
+        )
+
+    for input_tokens in (3_000_000, 1_000_000):
+        deepseek_call, _ = ledger.authorize_call(
+            "review:gh-1-1",
+            "deepseek-v4-flash",
+            input_tokens=input_tokens,
+            max_output_tokens=0,
+            uncertainty_multiplier=Decimal("1"),
+        )
+        ledger.reconcile_call(deepseek_call, input_tokens, 0)
+    with pytest.raises(BudgetExceeded, match="Per-model/provider task cap"):
+        ledger.authorize_call(
+            "review:gh-1-1",
+            "deepseek-v4-flash",
+            input_tokens=1_100_000,
+            max_output_tokens=0,
+            uncertainty_multiplier=Decimal("1"),
+        )
+
+
+def test_retry_attempts_share_the_same_article_caps(tmp_path) -> None:
+    settings = BudgetSettings(single_request_cap_cny=10)
+    ledger = BudgetLedger(tmp_path / "budget.sqlite", settings)
+    ledger.reserve_task("same-review:gh-1-1")
+    for input_tokens in (1_500_000, 500_000):
+        call_id, _ = ledger.authorize_call(
+            "same-review:gh-1-1",
+            "kimi-k2.6",
+            input_tokens=input_tokens,
+            max_output_tokens=0,
+            uncertainty_multiplier=Decimal("1"),
+        )
+        ledger.reconcile_call(call_id, input_tokens, 0)
+    ledger.fail_task("same-review:gh-1-1")
+
+    ledger.reserve_task("same-review:gh-2-1")
+    with pytest.raises(BudgetExceeded, match="Per-model/provider task cap"):
+        ledger.authorize_call(
+            "same-review:gh-2-1",
+            "kimi-k2.6",
+            input_tokens=1_100_000,
+            max_output_tokens=0,
+            uncertainty_multiplier=Decimal("1"),
+        )
 
 
 def test_unknown_model_is_blocked(tmp_path) -> None:

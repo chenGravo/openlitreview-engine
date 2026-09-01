@@ -77,13 +77,18 @@ class BudgetSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quality_trial_unlimited: bool = False
-    task_reservation_cny: float = Field(default=15.0, gt=0, le=30)
-    monthly_warning_cny: float = Field(default=80.0, gt=0, le=100)
-    monthly_hard_stop_cny: float = Field(default=90.0, gt=0, le=100)
+    task_reservation_cny: float = Field(default=35.0, gt=0, le=35)
+    monthly_warning_cny: float = Field(default=90.0, gt=0, le=100)
+    monthly_hard_stop_cny: float = Field(default=99.0, gt=0, le=100)
     external_monthly_cap_cny: float = Field(default=100.0, gt=0, le=100)
     single_request_cap_cny: float = Field(default=5.0, gt=0, le=10)
-    per_model_task_cap_cny: float = Field(default=10.0, gt=0, le=10)
-    monthly_per_model_cap_cny: float = Field(default=10.0, gt=0, le=10)
+    # Kept for backwards compatibility with older task files. When present, this
+    # acts as an additional ceiling over the provider-specific task caps below.
+    per_model_task_cap_cny: float | None = Field(default=None, gt=0, le=35)
+    deepseek_task_cap_cny: float = Field(default=15.0, gt=0, le=35)
+    kimi_task_cap_cny: float = Field(default=20.0, gt=0, le=35)
+    other_provider_task_cap_cny: float = Field(default=15.0, gt=0, le=35)
+    monthly_per_model_cap_cny: float = Field(default=99.0, gt=0, le=99)
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> BudgetSettings:
@@ -93,11 +98,27 @@ class BudgetSettings(BaseModel):
             < self.external_monthly_cap_cny + 1e-9
         ):
             raise ValueError("Budget thresholds must satisfy warning < hard stop <= external cap")
-        if self.single_request_cap_cny > self.per_model_task_cap_cny:
+        provider_caps = [
+            self.deepseek_task_cap_cny,
+            self.kimi_task_cap_cny,
+            self.other_provider_task_cap_cny,
+        ]
+        if self.per_model_task_cap_cny is not None:
+            provider_caps.append(self.per_model_task_cap_cny)
+        if self.single_request_cap_cny > min(provider_caps):
             raise ValueError("Single request cap must not exceed the per-model task cap")
         if self.single_request_cap_cny > self.monthly_per_model_cap_cny:
             raise ValueError("Single request cap must not exceed the monthly per-model cap")
         return self
+
+    def provider_task_cap_cny(self, provider: str) -> float:
+        provider_cap = {
+            "deepseek": self.deepseek_task_cap_cny,
+            "kimi": self.kimi_task_cap_cny,
+        }.get(provider, self.other_provider_task_cap_cny)
+        if self.per_model_task_cap_cny is not None:
+            return min(provider_cap, self.per_model_task_cap_cny)
+        return provider_cap
 
 
 class ModelSettings(BaseModel):

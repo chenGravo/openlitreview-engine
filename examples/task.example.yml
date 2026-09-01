@@ -43,13 +43,15 @@ output:
     - pdf
 
 budget:
-  task_reservation_cny: 15
-  monthly_warning_cny: 80
-  monthly_hard_stop_cny: 90
+  task_reservation_cny: 35
+  monthly_warning_cny: 90
+  monthly_hard_stop_cny: 99
   external_monthly_cap_cny: 100
   single_request_cap_cny: 5
-  per_model_task_cap_cny: 10
-  monthly_per_model_cap_cny: 10
+  deepseek_task_cap_cny: 15
+  kimi_task_cap_cny: 20
+  other_provider_task_cap_cny: 15
+  monthly_per_model_cap_cny: 99
 
 models:
   enabled: true
