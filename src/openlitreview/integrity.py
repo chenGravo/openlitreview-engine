@@ -16,23 +16,49 @@ ADVERSE_UPDATE_TERMS = {
 }
 
 
+class _RequestPacer:
+    def __init__(self, interval_seconds: float) -> None:
+        self.interval_seconds = max(0.0, interval_seconds)
+        self._lock = asyncio.Lock()
+        self._next_start = 0.0
+
+    async def wait(self) -> None:
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            delay = self._next_start - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._next_start = loop.time() + self.interval_seconds
+
+
 async def check_publication_updates(
-    papers: list[PaperRecord], max_concurrency: int = 3
+    papers: list[PaperRecord],
+    max_concurrency: int = 3,
+    *,
+    request_interval_seconds: float = 0.15,
+    max_attempts: int = 3,
 ) -> list[PaperRecord]:
     semaphore = asyncio.Semaphore(max_concurrency)
+    pacer = _RequestPacer(request_interval_seconds)
     async with httpx.AsyncClient(
         headers=ANONYMOUS_JSON_HEADERS,
         timeout=httpx.Timeout(30.0, connect=10.0),
         follow_redirects=True,
     ) as client:
-        tasks = [_check_one(client, semaphore, paper) for paper in papers]
+        tasks = [
+            _check_one(client, semaphore, pacer, paper, max_attempts=max_attempts)
+            for paper in papers
+        ]
         return await asyncio.gather(*tasks)
 
 
 async def _check_one(
     client: httpx.AsyncClient,
     semaphore: asyncio.Semaphore,
+    pacer: _RequestPacer,
     paper: PaperRecord,
+    *,
+    max_attempts: int,
 ) -> PaperRecord:
     copy = paper.model_copy(deep=True)
     if not paper.doi:
@@ -40,11 +66,13 @@ async def _check_one(
         copy.quality_flags.append("publication_update_check_limited")
         return copy
     try:
-        async with semaphore:
-            response = await client.get(
-                f"https://api.crossref.org/works/{quote(paper.doi, safe='')}"
-            )
-            response.raise_for_status()
+        response = await _get_with_retry(
+            client,
+            semaphore,
+            pacer,
+            f"https://api.crossref.org/works/{quote(paper.doi, safe='')}",
+            max_attempts=max_attempts,
+        )
         payload = response.json()
         message = payload.get("message") or {}
         updates = _extract_updates(message if isinstance(message, dict) else {})
@@ -65,6 +93,49 @@ async def _check_one(
         copy.publication_status = "check_failed"
         copy.quality_flags.append("publication_update_check_failed")
         return copy
+
+
+async def _get_with_retry(
+    client: httpx.AsyncClient,
+    semaphore: asyncio.Semaphore,
+    pacer: _RequestPacer,
+    url: str,
+    *,
+    max_attempts: int,
+) -> httpx.Response:
+    attempts = max(1, max_attempts)
+    for attempt in range(attempts):
+        try:
+            async with semaphore:
+                await pacer.wait()
+                response = await client.get(url)
+                response.raise_for_status()
+            return response
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            if attempt + 1 >= attempts or not _is_retryable(exc):
+                raise
+            await asyncio.sleep(_retry_delay_seconds(exc, attempt))
+    raise RuntimeError("unreachable retry state")
+
+
+def _is_retryable(exc: httpx.RequestError | httpx.HTTPStatusError) -> bool:
+    if isinstance(exc, httpx.RequestError):
+        return True
+    return exc.response.status_code == 429 or exc.response.status_code >= 500
+
+
+def _retry_delay_seconds(
+    exc: httpx.RequestError | httpx.HTTPStatusError,
+    attempt: int,
+) -> float:
+    if isinstance(exc, httpx.HTTPStatusError):
+        value = exc.response.headers.get("retry-after")
+        if value:
+            try:
+                return min(max(float(value), 0.0), 5.0)
+            except ValueError:
+                pass
+    return min(0.5 * (2**attempt), 5.0)
 
 
 def _extract_updates(message: dict[str, Any]) -> list[dict[str, str]]:

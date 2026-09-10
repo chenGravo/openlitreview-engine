@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -27,11 +28,10 @@ class FullTextResult:
     characters: int = 0
     error: str | None = None
     text_path: str | None = None
+    content_scope: str = "not_assessed"
 
 
 def license_allows_private_processing(paper: PaperRecord) -> bool:
-    if paper.pmcid and paper.open_access_pdf_url:
-        return True
     value = (paper.open_access_license or "").lower()
     markers = (
         "creativecommons.org/licenses/",
@@ -43,6 +43,52 @@ def license_allows_private_processing(paper: PaperRecord) -> bool:
         "public domain",
     )
     return bool(paper.open_access_pdf_url and any(marker in value for marker in markers))
+
+
+_PAGE_MARKER_RE = re.compile(r"\[Page\s+\d+\]\s*", re.IGNORECASE)
+_SECTION_SIGNAL_PATTERNS = (
+    re.compile(r"\b(?:introduction|background|literature review)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:methods?|methodology|materials and methods|research design|"
+        r"data collection|data analysis)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:results?|findings?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:discussion|conclusions?|implications?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:references|bibliography)\b", re.IGNORECASE),
+)
+
+
+def assess_substantive_fulltext(
+    extracted: str,
+    pages: int,
+    abstract: str | None = None,
+) -> tuple[bool, str]:
+    """Conservatively distinguish a substantive article from an abstract or excerpt.
+
+    Downloading a PDF proves only the file format, not that the file contains the full
+    article.  The quality label therefore requires a minimum extent plus either multiple
+    article-section signals or enough pages and text to make an abstract-only document
+    implausible.  Rejected documents can still fall back to abstract-level evidence.
+    """
+
+    normalized = re.sub(r"\s+", " ", _PAGE_MARKER_RE.sub(" ", extracted)).strip()
+    character_count = len(normalized)
+    if pages < 2:
+        return False, "single_page_document"
+    if character_count < 2_000:
+        return False, "insufficient_extracted_text"
+
+    normalized_abstract = re.sub(r"\s+", " ", abstract or "").strip()
+    if len(normalized_abstract) >= 200 and character_count < max(
+        2_000, int(len(normalized_abstract) * 1.75)
+    ):
+        return False, "document_is_not_substantially_longer_than_abstract"
+
+    section_signals = sum(bool(pattern.search(normalized)) for pattern in _SECTION_SIGNAL_PATTERNS)
+    if section_signals < 2 and not (pages >= 4 and character_count >= 6_000):
+        return False, "insufficient_fulltext_structure"
+    return True, "substantive_fulltext"
 
 
 async def collect_fulltexts(
@@ -119,9 +165,7 @@ async def _download_and_extract(
         content = b"".join(chunks)
         if not content.startswith(b"%PDF"):
             raise ValueError("Downloaded content is not a PDF")
-        pdf_path = work_dir / f"{key}.pdf"
-        pdf_path.write_bytes(content)
-        reader = PdfReader(pdf_path)
+        reader = PdfReader(BytesIO(content))
         page_texts: list[str] = []
         for index, page in enumerate(reader.pages, start=1):
             text = page.extract_text() or ""
@@ -129,11 +173,26 @@ async def _download_and_extract(
             if text:
                 page_texts.append(f"[Page {index}] {text}")
         extracted = "\n\n".join(page_texts)
-        if len(extracted) < 500:
-            raise ValueError("Extracted PDF text is too short; OCR may be required")
+        verified, verification_reason = assess_substantive_fulltext(
+            extracted,
+            len(reader.pages),
+            paper.abstract,
+        )
+        if not verified:
+            return FullTextResult(
+                record_id=paper.record_id,
+                citation_key=key,
+                status="rejected_non_substantive_fulltext",
+                source_url=url,
+                license=paper.open_access_license,
+                sha256=hashlib.sha256(content).hexdigest(),
+                pages=len(reader.pages),
+                characters=len(extracted),
+                error=verification_reason,
+                content_scope="abstract_or_excerpt",
+            )
         text_path = work_dir / f"{key}.txt"
         text_path.write_text(extracted, encoding="utf-8")
-        pdf_path.unlink(missing_ok=True)
         return FullTextResult(
             record_id=paper.record_id,
             citation_key=key,
@@ -144,6 +203,7 @@ async def _download_and_extract(
             pages=len(reader.pages),
             characters=len(extracted),
             text_path=str(text_path),
+            content_scope="substantive_fulltext",
         )
     except Exception as exc:
         return FullTextResult(

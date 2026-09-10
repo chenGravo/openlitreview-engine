@@ -146,3 +146,40 @@ async def test_publication_update_check_sends_no_contact_fields(monkeypatch) -> 
     serialized_headers = str(captured_init.get("headers", {})).lower()
     assert "private.owner@example.com" not in serialized_headers
     assert "@" not in serialized_headers
+
+
+@pytest.mark.asyncio
+async def test_publication_update_check_retries_rate_limit(monkeypatch) -> None:
+    request = httpx.Request("GET", "https://api.crossref.org/works/10.1234%2Fexample")
+    responses = [
+        httpx.Response(429, request=request, headers={"retry-after": "0"}),
+        httpx.Response(200, request=request, json={"message": {}}),
+    ]
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return responses.pop(0)
+
+    monkeypatch.setattr(integrity_module.httpx, "AsyncClient", FakeClient)
+    paper = PaperRecord(
+        record_id="paper-1",
+        title="Example intervention",
+        doi="10.1234/example",
+    )
+
+    result = await integrity_module.check_publication_updates(
+        [paper],
+        request_interval_seconds=0,
+    )
+
+    assert result[0].publication_status == "no_adverse_update_found"
+    assert responses == []

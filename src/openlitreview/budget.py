@@ -222,7 +222,12 @@ class BudgetLedger:
         *,
         status: str = "completed",
     ) -> Decimal:
-        if status not in {"completed", "failed_billed", "failed_unknown"}:
+        if status not in {
+            "completed",
+            "failed_billed",
+            "failed_unknown",
+            "failed_not_billed",
+        }:
             raise ValueError(f"Unsupported call status: {status}")
         with self._transaction() as connection:
             call = connection.execute(
@@ -232,6 +237,8 @@ class BudgetLedger:
                 raise KeyError(f"Unknown call id: {call_id}")
             if status == "failed_unknown":
                 actual = Decimal(call["estimated_cny"])
+            elif status == "failed_not_billed":
+                actual = Decimal("0.0000")
             else:
                 price = get_price(call["model_alias"])
                 actual = price.estimate(input_tokens, output_tokens)

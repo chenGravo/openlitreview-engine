@@ -44,7 +44,9 @@ academic evidence set. Produce exactly one source summary for every supplied cit
 quantitative results, null findings, disagreements, population and intervention boundaries,
 study-design strength, medical-safety uncertainty, and limitations. Use only supplied evidence
 IDs and citation keys. Do not infer missing results or invent facts, sources, identifiers, or
-certainty. Return strict JSON only."""
+certainty. Evidence marked `bibliographic_metadata` supports only authorship, title, publication
+year, and the reported retrieval-time citation count; never infer the work's substantive content
+from that metadata. Return strict JSON only."""
 
 SECTION_WRITING_SYSTEM = (
     WRITING_SYSTEM

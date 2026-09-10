@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .fulltext import license_allows_private_processing
 from .schemas import EvidenceCard, SearchRun, TaskSpec
 from .storage import citation_key
 
@@ -13,6 +15,10 @@ SECTION_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 TRAILING_CITATIONS_RE = re.compile(r"(?:\s*\[@[^\]]+\])+\s*$")
 SENTENCE_ENDINGS = frozenset("。！？；：.!?;:…")
 TRAILING_CLOSERS = frozenset("”’\"'）)]】》〉」』*_`")
+ADVERSE_PUBLICATION_STATUSES = frozenset(
+    {"retracted", "withdrawn", "expression_of_concern"}
+)
+VERIFIED_PUBLICATION_STATUSES = frozenset({"no_adverse_update_found", "updated"})
 
 
 def audit_run(
@@ -24,6 +30,7 @@ def audit_run(
     output: Path,
 ) -> dict[str, Any]:
     known = {citation_key(paper): paper for paper in run.papers}
+    known_by_record = {paper.record_id: paper for paper in run.papers}
     operational_sources = [
         source.value
         for source in task.search.sources
@@ -62,6 +69,8 @@ def audit_run(
             }
         )
     used_keys: set[str] = set()
+    substantive_evidence_keys: set[str] = set()
+    bibliographic_metadata_papers: set[str] = set()
     unknown_keys: set[str] = set()
     uncited_paragraphs: list[str] = []
     unfinished_sections: list[str] = []
@@ -109,14 +118,14 @@ def audit_run(
         adverse = [
             key
             for key in used_keys & set(known)
-            if known[key].publication_status in {"retracted", "withdrawn"}
+            if known[key].publication_status in ADVERSE_PUBLICATION_STATUSES
         ]
         if adverse:
             findings.append(
                 {
                     "severity": "high",
                     "code": "adverse_publication_cited",
-                    "message": f"Retracted or withdrawn records cited: {adverse}",
+                    "message": f"Adverse publication-status records cited: {adverse}",
                 }
             )
     if cards is not None and not cards:
@@ -128,7 +137,22 @@ def audit_run(
             }
         )
     if cards:
-        evidence_papers = {card.record_id for card in cards}
+        all_evidence_papers = {card.record_id for card in cards}
+        evidence_papers = {
+            card.record_id
+            for card in cards
+            if card.evidence_type != "bibliographic_metadata"
+        }
+        bibliographic_metadata_papers = {
+            card.record_id
+            for card in cards
+            if card.evidence_type == "bibliographic_metadata"
+        }
+        substantive_evidence_keys = {
+            citation_key(known_by_record[record_id])
+            for record_id in evidence_papers
+            if record_id in known_by_record
+        }
         fulltext_papers = {card.record_id for card in cards if card.fulltext_verified}
         if len(evidence_papers) < task.quality.minimum_evidence_papers:
             findings.append(
@@ -152,13 +176,89 @@ def audit_run(
                     ),
                 }
             )
-    if markdown and len(used_keys) < task.quality.minimum_cited_papers:
+        publication_statuses = Counter(
+            known_by_record[record_id].publication_status
+            for record_id in evidence_papers
+            if record_id in known_by_record
+        )
+        publication_checked_papers = sum(
+            publication_statuses[status] for status in VERIFIED_PUBLICATION_STATUSES
+        )
+        required_publication_checks = min(
+            task.quality.minimum_evidence_papers,
+            len(evidence_papers),
+        )
+        if publication_checked_papers < required_publication_checks:
+            findings.append(
+                {
+                    "severity": "high",
+                    "code": "insufficient_publication_status_checks",
+                    "message": (
+                        f"Only {publication_checked_papers} evidence papers completed a "
+                        "publication-status check without an adverse update; task requires "
+                        f"at least {required_publication_checks}. Status counts: "
+                        f"{dict(sorted(publication_statuses.items()))}."
+                    ),
+                }
+            )
+        incomplete_publication_checks = sum(
+            count
+            for status, count in publication_statuses.items()
+            if status not in VERIFIED_PUBLICATION_STATUSES
+            and status not in ADVERSE_PUBLICATION_STATUSES
+        )
+        if incomplete_publication_checks:
+            findings.append(
+                {
+                    "severity": "medium",
+                    "code": "publication_status_checks_incomplete",
+                    "message": (
+                        f"{incomplete_publication_checks} evidence papers have an incomplete "
+                        f"publication-status check: {dict(sorted(publication_statuses.items()))}."
+                    ),
+                }
+            )
+        adverse_evidence = sorted(
+            record_id
+            for record_id in all_evidence_papers
+            if record_id in known_by_record
+            and known_by_record[record_id].publication_status
+            in ADVERSE_PUBLICATION_STATUSES
+        )
+        if adverse_evidence:
+            findings.append(
+                {
+                    "severity": "high",
+                    "code": "adverse_publication_in_evidence",
+                    "message": f"Evidence cards include adverse-status records: {adverse_evidence}",
+                }
+            )
+        fulltext_without_verified_license = sorted(
+            record_id
+            for record_id in fulltext_papers
+            if record_id not in known_by_record
+            or not license_allows_private_processing(known_by_record[record_id])
+        )
+        if fulltext_without_verified_license:
+            findings.append(
+                {
+                    "severity": "high",
+                    "code": "fulltext_license_not_verified",
+                    "message": (
+                        "Full-text evidence was marked verified without an explicit supported "
+                        f"reuse license: {fulltext_without_verified_license}"
+                    ),
+                }
+            )
+    substantive_used_keys = used_keys & substantive_evidence_keys
+    if markdown and len(substantive_used_keys) < task.quality.minimum_cited_papers:
         findings.append(
             {
                 "severity": "high",
                 "code": "insufficient_cited_papers",
                 "message": (
-                    f"Draft cites {len(used_keys)} papers; task requires at least "
+                    f"Draft cites {len(substantive_used_keys)} substantive evidence papers; "
+                    "bibliographic-metadata-only citations do not count. Task requires at least "
                     f"{task.quality.minimum_cited_papers}."
                 ),
             }
@@ -201,12 +301,47 @@ def audit_run(
         "deduplicated_records": run.deduplicated_record_count,
         "retained_records": len(run.papers),
         "evidence_cards": len(cards or []),
-        "evidence_papers": len({card.record_id for card in cards or []}),
+        "evidence_papers": len(
+            {
+                card.record_id
+                for card in cards or []
+                if card.evidence_type != "bibliographic_metadata"
+            }
+        ),
+        "bibliographic_metadata_papers": len(bibliographic_metadata_papers),
         "fulltext_verified_papers": len(
             {card.record_id for card in cards or [] if card.fulltext_verified}
         ),
         "fulltext_verified_cards": sum(card.fulltext_verified for card in cards or []),
+        "fulltext_license_verified_papers": len(
+            {
+                card.record_id
+                for card in cards or []
+                if card.fulltext_verified
+                and card.record_id in known_by_record
+                and license_allows_private_processing(known_by_record[card.record_id])
+            }
+        ),
+        "publication_status_counts": dict(
+            sorted(
+                Counter(
+                    known_by_record[record_id].publication_status
+                    for record_id in {card.record_id for card in cards or []}
+                    if record_id in known_by_record
+                ).items()
+            )
+        ),
+        "publication_status_checked_papers": len(
+            {
+                card.record_id
+                for card in cards or []
+                if card.record_id in known_by_record
+                and known_by_record[card.record_id].publication_status
+                in VERIFIED_PUBLICATION_STATUSES
+            }
+        ),
         "citations_used": len(used_keys),
+        "substantive_citations_used": len(substantive_used_keys),
         "unknown_citations": sorted(unknown_keys),
         "uncited_long_paragraphs": uncited_paragraphs,
         "unfinished_sections": unfinished_sections,
@@ -270,8 +405,13 @@ def _report_markdown(report: dict[str, Any]) -> str:
 - 保留记录：{report['retained_records']}
 - 证据卡片：{report['evidence_cards']}
 - 进入证据矩阵的文献：{report['evidence_papers']}
+- 仅用于历史定位的书目元数据文献：{report['bibliographic_metadata_papers']}
 - 全文核验文献：{report['fulltext_verified_papers']}
+- 明确许可支持的全文文献：{report['fulltext_license_verified_papers']}
+- 完成发表状态核查的证据文献：{report['publication_status_checked_papers']}
+- 发表状态分布：{report['publication_status_counts']}
 - 正文引用文献：{report['citations_used']}
+- 正文引用的实质性证据文献：{report['substantive_citations_used']}
 - 模型复核方式：{report['model_review_mode']}
 - 模型复核结论：{report['model_review_verdict']}
 

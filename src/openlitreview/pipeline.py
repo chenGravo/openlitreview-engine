@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -16,7 +17,7 @@ from .integrity import check_publication_updates
 from .llm import LLMClient
 from .prompts import QUERY_SYSTEM, query_expansion_prompt
 from .render import render_documents
-from .schemas import PaperRecord, TaskSpec
+from .schemas import PaperRecord, TaskSpec, normalize_title
 from .search import run_search
 from .storage import prepare_run_directory, write_search_outputs
 from .writer import generate_review
@@ -85,6 +86,7 @@ async def execute_pipeline(
         fulltext_candidates = [
             paper for paper in search_run.papers if paper.canonical_key() not in seeded_keys
         ]
+        fulltext_candidates = _prioritize_topical_papers(fulltext_candidates)
         fulltext_results = await collect_fulltexts(
             fulltext_candidates[: task.search.screening_pool],
             output / "private_work" / "fulltext",
@@ -98,6 +100,12 @@ async def execute_pipeline(
             new_evidence_papers,
             limit=task.search.target_fulltexts,
         )
+        evidence_papers = await _ensure_publication_status_checked(evidence_papers)
+        refreshed_by_record = {paper.record_id: paper for paper in evidence_papers}
+        search_run.papers = [
+            refreshed_by_record.get(paper.record_id, paper) for paper in search_run.papers
+        ]
+        write_search_outputs(search_run, task, output)
         cards, extraction_log = await extract_evidence_cards(
             task,
             evidence_papers,
@@ -107,7 +115,13 @@ async def execute_pipeline(
             initial_cards=seed_cards,
             initial_log=seed_log,
         )
-        evidence_paper_count = len({card.record_id for card in cards})
+        evidence_paper_count = len(
+            {
+                card.record_id
+                for card in cards
+                if card.evidence_type != "bibliographic_metadata"
+            }
+        )
         if evidence_paper_count < task.quality.minimum_evidence_papers:
             quality = audit_run(task, search_run, cards, None, None, output)
             _write_provenance(
@@ -204,12 +218,139 @@ async def _expand_queries(task: TaskSpec, client: LLMClient) -> list[str]:
 def _select_evidence_papers(
     papers: list[PaperRecord], fulltexts: list[Any], target: int
 ) -> list[PaperRecord]:
+    papers = _prioritize_topical_papers(papers)
     fulltext_ids = {
         result.record_id for result in fulltexts if getattr(result, "status", None) == "extracted"
     }
     fulltext_papers = [paper for paper in papers if paper.record_id in fulltext_ids]
     other_papers = [paper for paper in papers if paper.record_id not in fulltext_ids]
-    return [*fulltext_papers, *other_papers][:target]
+    foundational = _select_foundational_papers(papers, target)
+    return _merge_papers(foundational, [*fulltext_papers, *other_papers], limit=target)
+
+
+def _prioritize_topical_papers(papers: list[PaperRecord]) -> list[PaperRecord]:
+    """Keep broad recall, but make exact user-supplied concepts win evidence slots."""
+    primary: list[PaperRecord] = []
+    secondary: list[PaperRecord] = []
+    unanchored: list[PaperRecord] = []
+    for paper in papers:
+        primary_match = paper.rank_breakdown.get("primary_scope_match")
+        scope_match = paper.rank_breakdown.get("scope_match")
+        ranking_unavailable = primary_match is None and scope_match is None
+        if ranking_unavailable or (primary_match or 0) > 0:
+            primary.append(paper)
+        elif scope_match and scope_match > 0:
+            secondary.append(paper)
+        else:
+            unanchored.append(paper)
+    return [*primary, *secondary, *unanchored]
+
+
+def _select_foundational_papers(
+    papers: list[PaperRecord], target: int
+) -> list[PaperRecord]:
+    """Reserve a small, bounded share for older high-impact, on-topic records."""
+    reserve = min(8, max(2, target // 10), target)
+    candidates = [
+        paper
+        for paper in papers
+        if paper.year is not None
+        and paper.citation_count > 0
+        and paper.publication_status not in {"retracted", "withdrawn"}
+        and paper.rank_breakdown.get("scope_match", 1.0) > 0
+    ]
+    if not candidates:
+        return []
+    years = [paper.year for paper in candidates if paper.year is not None]
+    oldest = min(years)
+    newest = max(years)
+    span = max(newest - oldest, 1)
+
+    def foundation_score(paper: PaperRecord) -> float:
+        history = (newest - (paper.year or newest)) / span
+        relevance = paper.rank_breakdown.get("relevance", 0.0)
+        scope = paper.rank_breakdown.get("scope_match", 0.0)
+        text_available = 1.0 if len(paper.abstract or "") >= 200 else 0.0
+        return (
+            math.log1p(paper.citation_count)
+            + 0.75 * history
+            + 0.75 * text_available
+            + 0.5 * scope
+            + 0.25 * relevance
+        )
+
+    selected: list[PaperRecord] = []
+    primary = [
+        paper
+        for paper in candidates
+        if paper.rank_breakdown.get("primary_scope_match", 1.0) > 0
+    ]
+    secondary = [
+        paper
+        for paper in candidates
+        if paper.rank_breakdown.get("primary_scope_match", 1.0) <= 0
+    ]
+    secondary_slots = min(len(secondary), max(1, reserve // 4))
+    primary_slots = reserve - secondary_slots
+    _append_foundational(selected, primary, primary_slots, foundation_score)
+    _append_foundational(selected, secondary, reserve, foundation_score)
+    _append_foundational(selected, candidates, reserve, foundation_score)
+    return selected
+
+
+def _append_foundational(
+    selected: list[PaperRecord],
+    candidates: list[PaperRecord],
+    limit: int,
+    score: Any,
+) -> None:
+    for paper in sorted(candidates, key=score, reverse=True):
+        if len(selected) >= limit:
+            return
+        if any(_likely_same_work(paper, existing) for existing in selected):
+            continue
+        copy = paper.model_copy(deep=True)
+        if "foundational_priority" not in copy.quality_flags:
+            copy.quality_flags.append("foundational_priority")
+        selected.append(copy)
+
+
+_TITLE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "for",
+    "in",
+    "of",
+    "on",
+    "the",
+    "to",
+    "with",
+}
+
+
+def _likely_same_work(left: PaperRecord, right: PaperRecord) -> bool:
+    left_tokens = set(normalize_title(left.title).split()) - _TITLE_STOPWORDS
+    right_tokens = set(normalize_title(right.title).split()) - _TITLE_STOPWORDS
+    if not left_tokens or not right_tokens:
+        return False
+    overlap = len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
+    return overlap >= 0.8
+
+
+async def _ensure_publication_status_checked(
+    papers: list[PaperRecord],
+) -> list[PaperRecord]:
+    unresolved = [
+        paper
+        for paper in papers
+        if paper.doi and paper.publication_status in {"unchecked", "check_failed"}
+    ]
+    if not unresolved:
+        return papers
+    refreshed = await check_publication_updates(unresolved)
+    refreshed_by_record = {paper.record_id: paper for paper in refreshed}
+    return [refreshed_by_record.get(paper.record_id, paper) for paper in papers]
 
 
 def _select_seed_papers(

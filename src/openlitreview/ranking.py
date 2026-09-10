@@ -8,12 +8,16 @@ from datetime import date
 from .schemas import PaperRecord, TaskSpec
 
 TOKEN_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)?", re.IGNORECASE)
+PHRASE_SEPARATOR_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 
 def rank_papers(papers: list[PaperRecord], task: TaskSpec) -> list[PaperRecord]:
+    papers = [paper for paper in papers if paper_within_year_range(paper, task)]
     if not papers:
         return []
-    query_tokens = tokenize(" ".join([task.research_question, *task.keywords, *task.include_terms]))
+    scope_terms = _scope_terms(task)
+    query_text = " ".join(scope_terms) or task.research_question
+    query_tokens = tokenize(query_text)
     query_counts = Counter(query_tokens)
     documents = [tokenize(_document_text(paper)) for paper in papers]
     document_counts = [Counter(document) for document in documents]
@@ -24,7 +28,10 @@ def rank_papers(papers: list[PaperRecord], task: TaskSpec) -> list[PaperRecord]:
 
     bm25_values: list[float] = []
     title_values: list[float] = []
+    scope_values: list[float] = []
+    primary_scope_values: list[float] = []
     impact_values: list[float] = []
+    foundational_impact_values: list[float] = []
     recency_values: list[float] = []
     completeness_values: list[float] = []
     source_values: list[float] = []
@@ -44,8 +51,17 @@ def rank_papers(papers: list[PaperRecord], task: TaskSpec) -> list[PaperRecord]:
         title_tokens = set(tokenize(paper.title))
         query_set = set(query_tokens)
         title_values.append(len(title_tokens & query_set) / max(len(query_set), 1))
+        document_phrase = _normalize_phrase(_document_text(paper))
+        matched_terms = [term for term in scope_terms if _phrase_occurs(term, document_phrase)]
+        scope_values.append(len(matched_terms) / max(len(scope_terms), 1))
+        primary_scope_values.append(
+            1.0
+            if scope_terms and _phrase_occurs(scope_terms[0], document_phrase)
+            else 0.0
+        )
         age = max(1, current_year - (paper.year or current_year) + 1)
         impact_values.append(math.log1p(paper.citation_count) / (age**0.35))
+        foundational_impact_values.append(math.log1p(paper.citation_count))
         recency_values.append(math.exp(-max(0, age - 1) / 12))
         completeness = sum(
             (
@@ -62,18 +78,24 @@ def rank_papers(papers: list[PaperRecord], task: TaskSpec) -> list[PaperRecord]:
     normalized_components = {
         "relevance": _normalize(bm25_values),
         "title_match": _normalize(title_values),
+        "scope_match": scope_values,
+        "primary_scope_match": primary_scope_values,
         "impact": _normalize(impact_values),
+        "foundational_impact": _normalize(foundational_impact_values),
         "recency": _normalize(recency_values),
         "evidence_availability": completeness_values,
         "source_confirmation": source_values,
     }
     weights = {
-        "relevance": 0.45,
-        "title_match": 0.15,
-        "impact": 0.15,
-        "recency": 0.10,
-        "evidence_availability": 0.10,
-        "source_confirmation": 0.05,
+        "relevance": 0.30,
+        "title_match": 0.10,
+        "scope_match": 0.15,
+        "primary_scope_match": 0.15,
+        "impact": 0.08,
+        "foundational_impact": 0.10,
+        "recency": 0.03,
+        "evidence_availability": 0.06,
+        "source_confirmation": 0.03,
     }
     ranked: list[PaperRecord] = []
     for index, paper in enumerate(papers):
@@ -86,11 +108,15 @@ def rank_papers(papers: list[PaperRecord], task: TaskSpec) -> list[PaperRecord]:
         copy.rank_score = round(score, 6)
         copy.rank_breakdown = breakdown
         if not copy.abstract:
-            copy.quality_flags.append("abstract_missing")
+            _append_flag(copy, "abstract_missing")
         if not (copy.doi or copy.pmid or copy.arxiv_id):
-            copy.quality_flags.append("persistent_identifier_missing")
+            _append_flag(copy, "persistent_identifier_missing")
         if not copy.open_access_pdf_url:
-            copy.quality_flags.append("open_fulltext_unconfirmed")
+            _append_flag(copy, "open_fulltext_unconfirmed")
+        if scope_terms and breakdown["scope_match"] == 0:
+            _append_flag(copy, "topical_anchor_missing")
+        elif scope_terms and breakdown["primary_scope_match"] == 0:
+            _append_flag(copy, "primary_scope_missing")
         ranked.append(copy)
     ranked.sort(key=lambda paper: (paper.rank_score, paper.citation_count), reverse=True)
     return ranked
@@ -107,12 +133,45 @@ def filter_excluded(papers: list[PaperRecord], task: TaskSpec) -> list[PaperReco
     ]
 
 
+def paper_within_year_range(paper: PaperRecord, task: TaskSpec) -> bool:
+    """Enforce configured dates locally instead of trusting remote source filters."""
+    if task.year_from is None and task.year_to is None:
+        return True
+    if paper.year is None:
+        return False
+    if task.year_from is not None and paper.year < task.year_from:
+        return False
+    return task.year_to is None or paper.year <= task.year_to
+
+
 def tokenize(text: str) -> list[str]:
     return [token.lower() for token in TOKEN_RE.findall(text)]
 
 
 def _document_text(paper: PaperRecord) -> str:
     return " ".join([paper.title, paper.abstract or "", " ".join(paper.topics)])
+
+
+def _scope_terms(task: TaskSpec) -> list[str]:
+    terms = [
+        normalized
+        for value in [*task.keywords, *task.include_terms]
+        if (normalized := _normalize_phrase(value))
+    ]
+    return list(dict.fromkeys(terms))
+
+
+def _normalize_phrase(text: str) -> str:
+    return PHRASE_SEPARATOR_RE.sub(" ", text.casefold()).strip()
+
+
+def _phrase_occurs(term: str, normalized_document: str) -> bool:
+    return f" {term} " in f" {normalized_document} "
+
+
+def _append_flag(paper: PaperRecord, flag: str) -> None:
+    if flag not in paper.quality_flags:
+        paper.quality_flags.append(flag)
 
 
 def _bm25(
@@ -147,4 +206,3 @@ def _normalize(values: list[float]) -> list[float]:
     if math.isclose(low, high):
         return [1.0 if high > 0 else 0.0 for _ in values]
     return [(value - low) / (high - low) for value in values]
-

@@ -59,3 +59,162 @@ def test_unfinished_section_endings_detect_truncated_prose() -> None:
 [1] Example.
 """
     assert _unfinished_section_endings(markdown) == ["2 截断章节"]
+
+
+def test_incomplete_publication_status_checks_block_quality_gate(tmp_path) -> None:
+    task = TaskSpec(
+        title="Publication status audit",
+        research_question="What does the evidence show?",
+        keywords=["evidence"],
+        search={"minimum_independent_sources": 2},
+        quality={
+            "minimum_retained_records": 5,
+            "minimum_evidence_papers": 3,
+            "minimum_fulltext_verified_papers": 0,
+            "minimum_cited_papers": 3,
+        },
+    )
+    papers = [
+        PaperRecord(
+            record_id=f"p{index}",
+            title=f"Paper {index}",
+            publication_status="no_adverse_update_found" if index == 0 else "unchecked",
+        )
+        for index in range(5)
+    ]
+    run = SearchRun(
+        task_id="integrity-test",
+        started_at="2026-01-01T00:00:00Z",
+        queries=["evidence"],
+        source_status={
+            "crossref": {"status": "ok", "records": 3},
+            "semantic_scholar": {"status": "ok", "records": 2},
+        },
+        papers=papers,
+    )
+    cards = [
+        EvidenceCard(
+            evidence_id=f"e{index}",
+            record_id=f"p{index}",
+            claim="Claim",
+            evidence_type="abstract",
+            result="Result",
+        )
+        for index in range(3)
+    ]
+
+    report = audit_run(task, run, cards, None, None, tmp_path)
+
+    assert report["status"] == "blocked"
+    assert report["publication_status_checked_papers"] == 1
+    assert report["publication_status_counts"] == {
+        "no_adverse_update_found": 1,
+        "unchecked": 2,
+    }
+    assert any(
+        item["code"] == "insufficient_publication_status_checks"
+        for item in report["findings"]
+    )
+
+
+def test_unlicensed_document_cannot_satisfy_fulltext_quality_gate(tmp_path) -> None:
+    task = TaskSpec(
+        title="Full text license audit",
+        research_question="What does the evidence show?",
+        keywords=["evidence"],
+        search={"minimum_independent_sources": 2},
+        quality={
+            "minimum_retained_records": 5,
+            "minimum_evidence_papers": 3,
+            "minimum_fulltext_verified_papers": 1,
+            "minimum_cited_papers": 3,
+        },
+    )
+    papers = [
+        PaperRecord(
+            record_id=f"p{index}",
+            title=f"Paper {index}",
+            publication_status="no_adverse_update_found",
+            open_access_pdf_url="https://example.org/article.pdf" if index == 0 else None,
+            open_access_license=None,
+        )
+        for index in range(5)
+    ]
+    run = SearchRun(
+        task_id="license-test",
+        started_at="2026-01-01T00:00:00Z",
+        queries=["evidence"],
+        source_status={
+            "crossref": {"status": "ok", "records": 3},
+            "semantic_scholar": {"status": "ok", "records": 2},
+        },
+        papers=papers,
+    )
+    cards = [
+        EvidenceCard(
+            evidence_id=f"e{index}",
+            record_id=f"p{index}",
+            claim="Claim",
+            evidence_type="fulltext" if index == 0 else "abstract",
+            result="Result",
+            fulltext_verified=index == 0,
+        )
+        for index in range(3)
+    ]
+
+    report = audit_run(task, run, cards, None, None, tmp_path)
+
+    assert report["status"] == "blocked"
+    assert report["fulltext_license_verified_papers"] == 0
+    assert any(item["code"] == "fulltext_license_not_verified" for item in report["findings"])
+
+
+def test_bibliographic_metadata_does_not_satisfy_substantive_evidence_minimum(
+    tmp_path,
+) -> None:
+    task = TaskSpec(
+        title="Metadata evidence audit",
+        research_question="What does the evidence show?",
+        keywords=["evidence"],
+        search={"minimum_independent_sources": 2},
+        quality={
+            "minimum_retained_records": 5,
+            "minimum_evidence_papers": 3,
+            "minimum_fulltext_verified_papers": 0,
+            "minimum_cited_papers": 3,
+        },
+    )
+    papers = [
+        PaperRecord(
+            record_id=f"p{index}",
+            title=f"Paper {index}",
+            publication_status="no_adverse_update_found",
+        )
+        for index in range(5)
+    ]
+    run = SearchRun(
+        task_id="metadata-test",
+        started_at="2026-01-01T00:00:00Z",
+        queries=["evidence"],
+        source_status={
+            "crossref": {"status": "ok", "records": 3},
+            "semantic_scholar": {"status": "ok", "records": 2},
+        },
+        papers=papers,
+    )
+    cards = [
+        EvidenceCard(
+            evidence_id=f"e{index}",
+            record_id=f"p{index}",
+            claim="Claim",
+            evidence_type=("bibliographic_metadata" if index == 2 else "abstract"),
+            result="Result",
+        )
+        for index in range(3)
+    ]
+
+    report = audit_run(task, run, cards, None, None, tmp_path)
+
+    assert report["evidence_papers"] == 2
+    assert report["bibliographic_metadata_papers"] == 1
+    assert any(item["code"] == "insufficient_evidence_papers" for item in report["findings"])

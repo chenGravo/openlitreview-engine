@@ -7,6 +7,7 @@ from openlitreview.llm import (
     _build_request,
     _extract_content_and_usage,
     _is_ark_set_limit_exceeded,
+    _known_not_billed_failure,
     _parse_json_content,
     _safe_http_error_detail,
 )
@@ -106,6 +107,13 @@ def test_only_ark_set_limit_error_activates_quality_trial_fallback() -> None:
     )
     assert _is_ark_set_limit_exceeded(set_limit) is True
     assert _is_ark_set_limit_exceeded(burst) is False
+
+
+def test_only_kimi_429_is_classified_as_documented_unbilled_failure() -> None:
+    request = httpx.Request("POST", "https://api.moonshot.cn/v1/chat/completions")
+    assert _known_not_billed_failure("kimi", httpx.Response(429, request=request)) is True
+    assert _known_not_billed_failure("kimi", httpx.Response(500, request=request)) is False
+    assert _known_not_billed_failure("deepseek", httpx.Response(429, request=request)) is False
 
 
 def test_responses_request_does_not_store_provider_state() -> None:

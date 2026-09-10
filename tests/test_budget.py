@@ -22,6 +22,28 @@ def test_task_reservation_and_actual_reconciliation(tmp_path) -> None:
     assert summary["actual_cny"] == "1.2720"
 
 
+def test_documented_unbilled_failure_records_zero_cost(tmp_path) -> None:
+    ledger = BudgetLedger(tmp_path / "budget.sqlite", BudgetSettings())
+    ledger.reserve_task("task-unbilled")
+    call_id, _ = ledger.authorize_call(
+        "task-unbilled",
+        "kimi-k2.6",
+        input_tokens=20_000,
+        max_output_tokens=16_000,
+    )
+
+    actual = ledger.reconcile_call(
+        call_id,
+        input_tokens=20_000,
+        output_tokens=0,
+        status="failed_not_billed",
+    )
+    ledger.fail_task("task-unbilled")
+
+    assert actual == Decimal("0.0000")
+    assert ledger.task_summary("task-unbilled")["actual_cny"] == "0.0000"
+
+
 def test_monthly_hard_stop_blocks_new_task(tmp_path) -> None:
     settings = BudgetSettings(task_reservation_cny=30)
     ledger = BudgetLedger(tmp_path / "budget.sqlite", settings)

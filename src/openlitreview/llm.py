@@ -152,11 +152,12 @@ class LLMClient:
             self.ledger.reconcile_call(call_id, actual_input, actual_output)
             return parsed
         except httpx.HTTPStatusError as exc:
+            not_billed = _known_not_billed_failure(price.provider, exc.response)
             self.ledger.reconcile_call(
                 call_id,
                 input_tokens,
-                max_output_tokens,
-                status="failed_unknown",
+                0 if not_billed else max_output_tokens,
+                status="failed_not_billed" if not_billed else "failed_unknown",
             )
             detail = _safe_http_error_detail(exc.response)
             raise ModelResponseError(
@@ -178,6 +179,11 @@ class LLMClient:
                 status="failed_unknown",
             )
             raise ModelResponseError(f"Model request failed: {type(exc).__name__}") from exc
+
+
+def _known_not_billed_failure(provider: str, response: httpx.Response) -> bool:
+    """Classify only failures the provider explicitly documents as uncharged."""
+    return provider == "kimi" and response.status_code == 429
 
 
 def _first_environment_value(names: tuple[str, ...]) -> str | None:

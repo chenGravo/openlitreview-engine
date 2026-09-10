@@ -32,18 +32,28 @@ async def extract_evidence_cards(
         if result.status == "extracted" and result.text_path
     }
     allowed_record_ids = {paper.record_id for paper in papers[: task.search.target_fulltexts]}
-    cards = [card for card in (initial_cards or []) if card.record_id in allowed_record_ids]
+    adverse_record_ids = {
+        paper.record_id
+        for paper in papers[: task.search.target_fulltexts]
+        if paper.publication_status in {"retracted", "withdrawn", "expression_of_concern"}
+    }
+    cards = [
+        card
+        for card in (initial_cards or [])
+        if card.record_id in allowed_record_ids and card.record_id not in adverse_record_ids
+    ]
     log = [
         item
         for item in (initial_log or [])
         if not item.get("record_id") or item.get("record_id") in allowed_record_ids
+        if item.get("record_id") not in adverse_record_ids
     ]
     processed_record_ids = {card.record_id for card in cards}
     consecutive_failures = 0
     for paper in papers[: task.search.target_fulltexts]:
         if paper.record_id in processed_record_ids:
             continue
-        if paper.publication_status in {"retracted", "withdrawn"}:
+        if paper.publication_status in {"retracted", "withdrawn", "expression_of_concern"}:
             log.append(
                 {
                     "record_id": paper.record_id,
@@ -59,6 +69,18 @@ async def extract_evidence_cards(
         else:
             text = paper.abstract or ""
         if len(text) < 200:
+            if "foundational_priority" in paper.quality_flags:
+                cards.append(_foundational_metadata_card(paper))
+                log.append(
+                    {
+                        "record_id": paper.record_id,
+                        "citation_key": citation_key(paper),
+                        "status": "bibliographic_metadata_only",
+                        "fulltext_verified": False,
+                        "cards": 1,
+                    }
+                )
+                continue
             log.append({"record_id": paper.record_id, "status": "insufficient_text"})
             continue
         text = text[:45_000]
@@ -233,3 +255,27 @@ def write_evidence_outputs(
 def _optional_string(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _foundational_metadata_card(paper: PaperRecord) -> EvidenceCard:
+    author_text = ", ".join(paper.authors[:6]) or "authors unavailable"
+    year_text = str(paper.year) if paper.year is not None else "year unavailable"
+    return EvidenceCard(
+        evidence_id=f"{citation_key(paper)}_metadata",
+        record_id=paper.record_id,
+        claim="Bibliographic record for a historically prioritized source.",
+        evidence_type="bibliographic_metadata",
+        study_design=None,
+        population=None,
+        result=(
+            f"{author_text}. {paper.title}. Publication year: {year_text}. "
+            f"Citation count in the retrieved metadata: {paper.citation_count}."
+        ),
+        limitations=[
+            "Only bibliographic metadata was available; substantive claims from the work "
+            "were not verified."
+        ],
+        locator="bibliographic metadata",
+        fulltext_verified=False,
+        confidence="low",
+    )

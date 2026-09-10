@@ -23,6 +23,11 @@ class FailingClient:
         raise RuntimeError("synthetic provider failure")
 
 
+class NoCallClient:
+    async def complete_json(self, **kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("excluded adverse records must not invoke a model")
+
+
 @pytest.mark.asyncio
 async def test_evidence_extraction_stops_after_three_consecutive_failures(tmp_path) -> None:
     task = TaskSpec(
@@ -147,3 +152,75 @@ def test_evidence_seed_loads_paper_metadata(tmp_path) -> None:
     assert papers[0].doi == "10.1/test"
     assert digest == []
     assert writing == {}
+
+
+@pytest.mark.asyncio
+async def test_adverse_publication_status_removes_seeded_evidence(tmp_path) -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={"enabled": True},
+        search={"target_fulltexts": 10},
+    )
+    paper = PaperRecord(
+        record_id="adverse",
+        title="Adverse paper",
+        abstract="A" * 500,
+        publication_status="expression_of_concern",
+    )
+    seed = EvidenceCard(
+        evidence_id="seed_e1",
+        record_id="adverse",
+        claim="Seed claim",
+        evidence_type="abstract",
+        result="Seed result",
+    )
+
+    cards, log = await extract_evidence_cards(
+        task,
+        [paper],
+        [],
+        NoCallClient(),
+        tmp_path,
+        initial_cards=[seed],
+        initial_log=[{"record_id": "adverse", "status": "ok"}],
+    )
+
+    assert cards == []
+    assert log == [
+        {
+            "record_id": "adverse",
+            "status": "excluded_adverse_publication_status",
+            "publication_status": "expression_of_concern",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_foundational_record_without_text_gets_limited_metadata_card(tmp_path) -> None:
+    task = TaskSpec(
+        title="测试文献综述",
+        research_question="测试研究问题是什么？",
+        keywords=["test"],
+        models={"enabled": True},
+        search={"target_fulltexts": 10},
+    )
+    paper = PaperRecord(
+        record_id="classic",
+        title="Classic Test Monograph",
+        authors=["A. Scholar"],
+        year=1970,
+        citation_count=1234,
+        quality_flags=["foundational_priority"],
+    )
+
+    cards, log = await extract_evidence_cards(
+        task, [paper], [], NoCallClient(), tmp_path
+    )
+
+    assert len(cards) == 1
+    assert cards[0].evidence_type == "bibliographic_metadata"
+    assert cards[0].fulltext_verified is False
+    assert "substantive claims" in cards[0].limitations[0]
+    assert log[0]["status"] == "bibliographic_metadata_only"
