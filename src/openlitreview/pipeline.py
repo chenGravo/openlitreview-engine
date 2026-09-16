@@ -215,8 +215,16 @@ def _select_evidence_papers(
 def _select_seed_papers(
     papers: list[PaperRecord], cards: list[Any], target: int
 ) -> list[PaperRecord]:
+    """Prioritize every explicitly seeded paper, not only already-extracted papers.
+
+    Evidence seeds may contain paper metadata without cards so a human-screened set can
+    be extracted on the next run.  Card-backed papers remain first for deterministic
+    resume behavior, followed by the unprocessed seeded papers in their supplied order.
+    """
     card_ids = {card.record_id for card in cards}
-    return [paper for paper in papers if paper.record_id in card_ids][:target]
+    processed = [paper for paper in papers if paper.record_id in card_ids]
+    pending = [paper for paper in papers if paper.record_id not in card_ids]
+    return [*processed, *pending][:target]
 
 
 def _merge_papers(
