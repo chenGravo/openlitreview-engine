@@ -95,8 +95,11 @@ async def execute_pipeline(
             output / "private_work" / "fulltext",
             target=remaining_target,
         )
-        new_evidence_papers = _select_evidence_papers(
-            fulltext_candidates, fulltext_results, remaining_target
+        new_evidence_papers = _select_new_evidence_papers(
+            pending_seed_papers,
+            fulltext_candidates,
+            fulltext_results,
+            remaining_target,
         )
         evidence_papers = _merge_papers(
             selected_seed_papers,
@@ -231,6 +234,29 @@ def _select_pending_seed_papers(
     """Return metadata-only seeds so they are fetched and extracted on this run."""
     card_ids = {card.record_id for card in cards}
     return [paper for paper in papers if paper.record_id not in card_ids][:target]
+
+
+def _select_new_evidence_papers(
+    pending_seed_papers: list[PaperRecord],
+    fulltext_candidates: list[PaperRecord],
+    fulltexts: list[Any],
+    target: int,
+) -> list[PaperRecord]:
+    """Keep human-screened pending seeds ahead of unseeded search replacements."""
+    pending_target = min(len(pending_seed_papers), target)
+    selected_pending = _select_evidence_papers(
+        pending_seed_papers, fulltexts, pending_target
+    )
+    pending_keys = {paper.canonical_key() for paper in pending_seed_papers}
+    unseeded_candidates = [
+        paper
+        for paper in fulltext_candidates
+        if paper.canonical_key() not in pending_keys
+    ]
+    selected_unseeded = _select_evidence_papers(
+        unseeded_candidates, fulltexts, target - len(selected_pending)
+    )
+    return _merge_papers(selected_pending, selected_unseeded, limit=target)
 
 
 def _merge_papers(

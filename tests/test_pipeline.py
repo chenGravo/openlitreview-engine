@@ -1,6 +1,11 @@
 from types import SimpleNamespace
 
-from openlitreview.pipeline import _merge_papers, _select_pending_seed_papers, _select_seed_papers
+from openlitreview.pipeline import (
+    _merge_papers,
+    _select_new_evidence_papers,
+    _select_pending_seed_papers,
+    _select_seed_papers,
+)
 from openlitreview.schemas import PaperRecord
 
 
@@ -35,3 +40,16 @@ def test_processed_and_pending_seeds_precede_search_results() -> None:
     merged = _merge_papers([processed, pending], [search])
 
     assert [paper.record_id for paper in merged] == ["processed", "pending", "search"]
+
+
+def test_pending_seeds_are_selected_before_unseeded_fulltexts() -> None:
+    pending_a = _paper("pending-a")
+    pending_b = _paper("pending-b")
+    search = _paper("search")
+    fulltexts = [SimpleNamespace(record_id="search", status="extracted")]
+
+    selected = _select_new_evidence_papers(
+        [pending_a, pending_b], [pending_a, pending_b, search], fulltexts, target=2
+    )
+
+    assert [paper.record_id for paper in selected] == ["pending-a", "pending-b"]
