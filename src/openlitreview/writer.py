@@ -601,27 +601,105 @@ async def _review_draft(
     markdown: str,
     client: LLMClient,
 ) -> dict[str, Any]:
-    review_digest = _review_digest_for_citations(evidence_digest, markdown)
-    return await client.complete_json(
-        model_alias=task.models.reviewer_model,
-        system=REVIEW_SYSTEM,
-        prompt=(
-            "Return schema: "
-            '{"verdict":"pass|revise|reject","issues":[{"severity":"high|medium|low",'
-            '"location":"","problem":"","evidence_ids":[],"required_action":""}],'
-            '"missing_perspectives":[],"citation_problems":[]}\n'
-            + json.dumps(
-                {
-                    "task": _task_payload(task),
-                    "evidence_digest": review_digest,
-                    "draft_markdown": markdown,
-                },
-                ensure_ascii=False,
+    fragments = _review_markdown_fragments(markdown)
+    reviews: list[dict[str, Any]] = []
+    for fragment_number, fragment in enumerate(fragments, start=1):
+        review_digest = _review_digest_for_citations(evidence_digest, fragment)
+        reviews.append(
+            await client.complete_json(
+                model_alias=task.models.reviewer_model,
+                system=(
+                    REVIEW_SYSTEM
+                    + "\nThis is one bounded fragment of a larger draft. Review only the supplied "
+                    "fragment. Every citation used in this fragment has its source summary in "
+                    "the supplied digest; do not report sources or sections outside this fragment "
+                    "as missing."
+                ),
+                prompt=(
+                    "Return schema: "
+                    '{"verdict":"pass|revise|reject","issues":[{"severity":"high|medium|low",'
+                    '"location":"","problem":"","evidence_ids":[],"required_action":""}],'
+                    '"missing_perspectives":[],"citation_problems":[]}\n'
+                    + json.dumps(
+                        {
+                            "task": _task_payload(task),
+                            "review_fragment": {
+                                "number": fragment_number,
+                                "count": len(fragments),
+                            },
+                            "evidence_digest": review_digest,
+                            "draft_markdown": fragment,
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+                max_output_tokens=3_000 if len(fragments) > 1 else 6_000,
+                temperature=0.0,
             )
-        ),
-        max_output_tokens=6_000,
-        temperature=0.0,
-    )
+        )
+    return reviews[0] if len(reviews) == 1 else _merge_fragment_reviews(reviews)
+
+
+def _review_markdown_fragments(markdown: str, *, max_characters: int = 12_000) -> list[str]:
+    """Split a large manuscript at paragraph boundaries for bounded review calls."""
+    blocks = [block.strip() for block in re.split(r"\n{2,}", markdown) if block.strip()]
+    fragments: list[str] = []
+    current: list[str] = []
+    current_size = 0
+    for block in blocks:
+        block_size = len(block) + (2 if current else 0)
+        if current and current_size + block_size > max_characters:
+            fragments.append("\n\n".join(current))
+            current = []
+            current_size = 0
+        current.append(block)
+        current_size += len(block) + (2 if len(current) > 1 else 0)
+    if current:
+        fragments.append("\n\n".join(current))
+    return fragments or [markdown]
+
+
+def _merge_fragment_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+    seen_issues: set[str] = set()
+    for review in reviews:
+        for issue in review.get("issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            identity = json.dumps(issue, ensure_ascii=False, sort_keys=True)
+            if identity not in seen_issues:
+                seen_issues.add(identity)
+                issues.append(issue)
+
+    high_issues = [
+        issue for issue in issues if str(issue.get("severity") or "").lower() == "high"
+    ]
+    verdict = "pass"
+    if high_issues:
+        verdict = (
+            "reject"
+            if any(str(review.get("verdict") or "").lower() == "reject" for review in reviews)
+            else "revise"
+        )
+    return {
+        "verdict": verdict,
+        "issues": issues,
+        "missing_perspectives": _unique_review_values(reviews, "missing_perspectives"),
+        "citation_problems": _unique_review_values(reviews, "citation_problems"),
+        "review_scope": {"fragment_count": len(reviews)},
+    }
+
+
+def _unique_review_values(reviews: list[dict[str, Any]], key: str) -> list[Any]:
+    values: list[Any] = []
+    seen: set[str] = set()
+    for review in reviews:
+        for value in review.get(key) or []:
+            identity = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            if identity not in seen:
+                seen.add(identity)
+                values.append(value)
+    return values
 
 
 def _review_digest_for_citations(

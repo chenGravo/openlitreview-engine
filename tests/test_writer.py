@@ -11,6 +11,8 @@ from openlitreview.writer import (
     _normalize_part_citations,
     _paper_batches,
     _review_digest_for_citations,
+    _review_markdown_fragments,
+    _merge_fragment_reviews,
     _review_payload_for_part,
     _sanitize_batch_digest,
     generate_review,
@@ -385,6 +387,39 @@ def test_review_digest_keeps_only_sources_cited_by_draft() -> None:
             ],
         }
     ]
+
+
+def test_large_review_markdown_is_split_at_paragraph_boundaries() -> None:
+    markdown = "\n\n".join(["第一段" * 10, "第二段" * 10, "第三段" * 10])
+
+    fragments = _review_markdown_fragments(markdown, max_characters=45)
+
+    assert fragments == ["第一段" * 10, "第二段" * 10, "第三段" * 10]
+
+
+def test_fragment_reviews_merge_and_only_high_issues_block_pass() -> None:
+    reviews = [
+        {
+            "verdict": "revise",
+            "issues": [{"severity": "medium", "problem": "措辞可更谨慎"}],
+            "missing_perspectives": ["长期随访"],
+            "citation_problems": [],
+        },
+        {
+            "verdict": "pass",
+            "issues": [{"severity": "low", "problem": "格式"}],
+            "missing_perspectives": ["长期随访"],
+            "citation_problems": ["一处定位待人工确认"],
+        },
+    ]
+
+    merged = _merge_fragment_reviews(reviews)
+
+    assert merged["verdict"] == "pass"
+    assert len(merged["issues"]) == 2
+    assert merged["missing_perspectives"] == ["长期随访"]
+    assert merged["citation_problems"] == ["一处定位待人工确认"]
+    assert merged["review_scope"] == {"fragment_count": 2}
 
 
 def test_evidence_card_citations_are_mapped_to_verified_paper_keys() -> None:
