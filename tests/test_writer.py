@@ -10,6 +10,7 @@ from openlitreview.writer import (
     _limitations_section_index,
     _normalize_part_citations,
     _paper_batches,
+    _review_digest_for_citations,
     _review_payload_for_part,
     _sanitize_batch_digest,
     generate_review,
@@ -347,6 +348,43 @@ def test_digest_batches_preserve_every_source_and_drop_unknown_ids() -> None:
     assert len(digest["source_summaries"]) == 8
     assert digest["source_summaries"][0]["evidence_ids"] == ["e0"]
     assert digest["cross_source_observations"] == [{"observation": "valid", "evidence_ids": ["e0"]}]
+
+
+def test_review_digest_keeps_only_sources_cited_by_draft() -> None:
+    digest = [
+        {
+            "batch_number": 1,
+            "source_summaries": [
+                {"citation_key": "ref_used", "evidence_ids": ["e_used"]},
+                {"citation_key": "ref_unused", "evidence_ids": ["e_unused"]},
+            ],
+            "cross_source_observations": [
+                {"observation": "used", "evidence_ids": ["e_used"]},
+                {"observation": "unused", "evidence_ids": ["e_unused"]},
+            ],
+        },
+        {
+            "batch_number": 2,
+            "source_summaries": [
+                {"citation_key": "ref_other", "evidence_ids": ["e_other"]}
+            ],
+            "cross_source_observations": [],
+        },
+    ]
+
+    selected = _review_digest_for_citations(digest, "正文。[@ref_used]")
+
+    assert selected == [
+        {
+            "batch_number": 1,
+            "source_summaries": [
+                {"citation_key": "ref_used", "evidence_ids": ["e_used"]}
+            ],
+            "cross_source_observations": [
+                {"observation": "used", "evidence_ids": ["e_used"]}
+            ],
+        }
+    ]
 
 
 def test_evidence_card_citations_are_mapped_to_verified_paper_keys() -> None:

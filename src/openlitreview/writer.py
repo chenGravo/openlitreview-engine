@@ -601,6 +601,7 @@ async def _review_draft(
     markdown: str,
     client: LLMClient,
 ) -> dict[str, Any]:
+    review_digest = _review_digest_for_citations(evidence_digest, markdown)
     return await client.complete_json(
         model_alias=task.models.reviewer_model,
         system=REVIEW_SYSTEM,
@@ -612,7 +613,7 @@ async def _review_draft(
             + json.dumps(
                 {
                     "task": _task_payload(task),
-                    "evidence_digest": evidence_digest,
+                    "evidence_digest": review_digest,
                     "draft_markdown": markdown,
                 },
                 ensure_ascii=False,
@@ -621,6 +622,56 @@ async def _review_draft(
         max_output_tokens=6_000,
         temperature=0.0,
     )
+
+
+def _review_digest_for_citations(
+    evidence_digest: list[dict[str, Any]], markdown: str
+) -> list[dict[str, Any]]:
+    """Keep the independent-review prompt focused on evidence cited by the draft.
+
+    The complete digest remains in the audit package.  The reviewer only needs
+    source summaries that can support or contradict claims actually present in
+    the manuscript; sending every screened source can exceed provider context
+    limits on large reviews without improving citation verification.
+    """
+    cited_keys = set(re.findall(r"@([A-Za-z0-9_:./-]+)", markdown))
+    if not cited_keys:
+        return evidence_digest
+
+    selected: list[dict[str, Any]] = []
+    for batch in evidence_digest:
+        summaries = [
+            summary
+            for summary in batch.get("source_summaries") or []
+            if isinstance(summary, dict)
+            and str(summary.get("citation_key") or "") in cited_keys
+        ]
+        if not summaries:
+            continue
+        evidence_ids = {
+            str(evidence_id)
+            for summary in summaries
+            for evidence_id in summary.get("evidence_ids") or []
+            if evidence_id
+        }
+        observations = [
+            observation
+            for observation in batch.get("cross_source_observations") or []
+            if isinstance(observation, dict)
+            and evidence_ids.intersection(
+                str(evidence_id)
+                for evidence_id in observation.get("evidence_ids") or []
+                if evidence_id
+            )
+        ]
+        selected.append(
+            {
+                "batch_number": batch.get("batch_number"),
+                "source_summaries": summaries,
+                "cross_source_observations": observations,
+            }
+        )
+    return selected or evidence_digest
 
 
 async def _build_evidence_digest(
