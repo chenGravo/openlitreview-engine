@@ -110,10 +110,24 @@ def test_only_ark_set_limit_error_activates_official_fallback() -> None:
 
 
 def test_only_kimi_429_is_classified_as_documented_unbilled_failure() -> None:
-    request = httpx.Request("POST", "https://api.moonshot.cn/v1/chat/completions")
-    assert _known_not_billed_failure("kimi", httpx.Response(429, request=request)) is True
-    assert _known_not_billed_failure("kimi", httpx.Response(500, request=request)) is False
-    assert _known_not_billed_failure("deepseek", httpx.Response(429, request=request)) is False
+    kimi_request = httpx.Request("POST", "https://api.moonshot.cn/v1/chat/completions")
+    ark_request = httpx.Request(
+        "POST", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    )
+    assert _known_not_billed_failure("kimi", httpx.Response(429, request=kimi_request)) is True
+    assert _known_not_billed_failure("kimi", httpx.Response(500, request=kimi_request)) is False
+    assert (
+        _known_not_billed_failure(
+            "deepseek",
+            httpx.Response(
+                429,
+                request=ark_request,
+                json={"error": {"code": "SetLimitExceeded"}},
+            ),
+        )
+        is True
+    )
+    assert _known_not_billed_failure("deepseek", httpx.Response(429, request=ark_request)) is False
 
 
 def test_responses_request_does_not_store_provider_state() -> None:

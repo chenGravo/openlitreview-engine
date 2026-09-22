@@ -182,7 +182,9 @@ class LLMClient:
 
 def _known_not_billed_failure(provider: str, response: httpx.Response) -> bool:
     """Classify only failures the provider explicitly documents as uncharged."""
-    return provider == "kimi" and response.status_code == 429
+    return (provider == "kimi" and response.status_code == 429) or (
+        provider == "deepseek" and _is_ark_set_limit_exceeded(response)
+    )
 
 
 def _first_environment_value(names: tuple[str, ...]) -> str | None:
