@@ -619,9 +619,10 @@ async def _review_draft(
                     + "\nThis is one bounded fragment of a larger draft. Review only the supplied "
                     "fragment. Every citation used in this fragment has its source summary in "
                     "the supplied digest; do not report sources or sections outside this fragment "
-                    "as missing. Report every high-severity issue, keep each problem and required "
-                    "action concise, and omit medium or low issues if needed to stay within the "
-                    "response limit."
+                    "as missing. Return high-severity issues only, at most eight per fragment. Keep "
+                    "each problem and required action under 60 Chinese words. Do not emit medium "
+                    "or low issues. If no high-severity issue remains, return verdict pass with an "
+                    "empty issues list."
                 ),
                 prompt=(
                     "Return schema: "
@@ -641,14 +642,14 @@ async def _review_draft(
                         ensure_ascii=False,
                     )
                 ),
-                max_output_tokens=3_000 if len(fragments) > 1 else 6_000,
+                max_output_tokens=2_000 if len(fragments) > 1 else 4_000,
                 temperature=0.0,
             )
         )
     return reviews[0] if len(reviews) == 1 else _merge_fragment_reviews(reviews)
 
 
-def _review_markdown_fragments(markdown: str, *, max_characters: int = 6_000) -> list[str]:
+def _review_markdown_fragments(markdown: str, *, max_characters: int = 3_000) -> list[str]:
     """Split a large manuscript at paragraph boundaries for bounded review calls."""
     blocks = [block.strip() for block in re.split(r"\n{2,}", markdown) if block.strip()]
     fragments: list[str] = []
