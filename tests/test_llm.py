@@ -93,7 +93,7 @@ def test_http_error_detail_excludes_message_and_contact_data() -> None:
     assert "private@example.com" not in detail
 
 
-def test_only_ark_set_limit_error_activates_quality_trial_fallback() -> None:
+def test_only_ark_set_limit_error_activates_official_fallback() -> None:
     request = httpx.Request("POST", "https://ark.cn-beijing.volces.com/api/v3/chat/completions")
     set_limit = httpx.Response(
         429,

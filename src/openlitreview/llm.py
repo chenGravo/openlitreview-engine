@@ -127,8 +127,7 @@ class LLMClient:
                     json=body,
                 )
                 if (
-                    self.ledger.settings.quality_trial_unlimited
-                    and _is_ark_set_limit_exceeded(response)
+                    _is_ark_set_limit_exceeded(response)
                     and provider.fallback_base_url
                     and provider.fallback_model
                 ):
